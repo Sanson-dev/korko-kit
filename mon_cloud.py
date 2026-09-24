@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 PORT, TARIF_MIN, PLAFOND = 9000, 0.20, 600
+RESERVATION_TIMEOUT = 120
 PERDUE = 3 * PLAFOND
 STATIQUE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 PARC = {"korko-01": "A", "korko-02": "A", "korko-03": "B", "korko-04": "B",
@@ -46,7 +47,8 @@ def armer(client, station, identifiant):
     planches[balise]["statut"] = "réservée"
     reservations[balise] = identifiant
     etat = {"client": client, "station": station, "balise": balise, "etat": "armée",
-            "armee_a": horloge, "session_id": uuid.uuid4().hex}
+            "armee_a": horloge, "reservation_t": horloge, "reservation_status": "Réservée",
+            "session_id": uuid.uuid4().hex}
     client_sessions[identifiant] = etat
     note("%s arme en station %s → %s" % (client, station, balise))
     return etat, None
@@ -122,12 +124,28 @@ def retards():
             s["rappel"] = True
             sms(s["client"], "Ta session tourne depuis %s. Raccroche %s en sortant." % (duree_txt(duree), balise))
 
+def expirations_reservations():
+    for identifiant, e in list(client_sessions.items()):
+        if (e.get("etat") != "armée" or e.get("reservation_status") != "Réservée"
+                or horloge - e.get("reservation_t", horloge) < RESERVATION_TIMEOUT):
+            continue
+        balise = e["balise"]
+        if reservations.get(balise) != identifiant:
+            continue
+        reservations.pop(balise)
+        p = planches[balise]
+        if p["statut"] == "réservée" and balise not in sessions:
+            p["statut"] = "au râtelier"
+        e.update({"etat": "expirée", "reservation_status": "Expirée", "expiree_a": horloge})
+        note("Réservation %s expirée après %d s" % (balise, RESERVATION_TIMEOUT))
+
 def traiter(ev):
     global horloge
     horloge = max(horloge, ev.get("t", horloge))
     type_, station = ev.get("evenement"), ev.get("station")
     if station not in signes: note("station %s branchée" % station)
     signes[station] = ev.get("t", horloge)
+    expirations_reservations()
     if type_ == "TIC":
         retards(); return
     balise = ev.get("balise")
@@ -145,7 +163,7 @@ def traiter(ev):
         if experience and experience["etat"] == "armée" and experience["station"] == station:
             reservations.pop(balise, None)
             client = experience["client"]
-            experience.update({"etat": "en cours", "depart_a": ev["t"]})
+            experience.update({"etat": "en cours", "reservation_status": "En cours", "depart_a": ev["t"]})
         elif (not identifiant and p["statut"] == "au râtelier" and p["ou"] == station
               and balise not in sessions):
             candidates = [(i, e) for i, e in client_sessions.items()
@@ -165,7 +183,7 @@ def traiter(ev):
                     note("PLANCHE MISE À JOUR : %s -> actual departure %s (%s)" % (ancien, balise, experience["client"]))
                     reservations.pop(balise, None)
                     client = experience["client"]
-                    experience.update({"etat": "en cours", "depart_a": ev["t"]})
+                    experience.update({"etat": "en cours", "reservation_status": "En cours", "depart_a": ev["t"]})
                 else:
                     candidates.append((None, {}))
             if len(candidates) > 1 or (candidates and legacy):
@@ -195,6 +213,8 @@ def client_json(identifiant):
     if r["etat"] == "en cours":
         r["duree"] = max(0, horloge - r["depart_a"])
         r["montant"] = r["duree"] / 60 * TARIF_MIN
+    if r.get("reservation_status") == "Réservée":
+        r["reservation_restante"] = max(0, RESERVATION_TIMEOUT - (horloge - r.get("reservation_t", horloge)))
     return r
 
 def tableau():
@@ -204,6 +224,9 @@ def tableau():
     for b, p in sorted(planches.items()):
         s = sessions.get(b)
         statut = p["statut"] + (" · À INSPECTER" if p.get("inspection") else "")
+        reservation = next((e for e in reversed(list(client_sessions.values())) if e.get("balise") == b and e.get("reservation_status") in ("Réservée", "En cours", "Expirée")), None)
+        if reservation:
+            statut += " · réservation %s" % reservation["reservation_status"]
         lignes.append("%-9s %-18s base %s  sorties %-3d %s" % (b, statut, p["origine"], p["sorties"], "→ %s depuis %s" % (s["client"], duree_txt(horloge-s["debut"])) if s else ""))
     lignes += ["", "ÉCARTS D'ATTRIBUTION", "-------------------"]
     ecarts = ["%s — %s" % (e["client"], e["ecart"]) for e in client_sessions.values() if e.get("ecart")]
@@ -272,6 +295,7 @@ class Cloud(BaseHTTPRequestHandler):
             items = []
             for b, p in sorted(planches.items()):
                 latest = next((r for r in rapports_planches if r["balise"] == b), None)
+                reservation = next((e for e in reversed(list(client_sessions.values())) if e.get("balise") == b and e.get("reservation_status") in ("Réservée", "En cours", "Expirée")), None)
                 if p["statut"] == "maintenance":
                     status = ("Réparation terminée — en attente du retour au râtelier"
                               if p.get("reparation_demandee") else "En maintenance")
@@ -281,6 +305,8 @@ class Cloud(BaseHTTPRequestHandler):
                     status = p["statut"]
                 detail = ("<br><small>Dernier état : %s%s</small>" %
                           (html.escape(latest["condition"]), " — " + html.escape(latest.get("photo", "")) if latest.get("photo") else "") if latest else "")
+                if reservation:
+                    detail += "<br><small>Réservation : %s</small>" % html.escape(reservation["reservation_status"])
                 action = (" <button type='button' onclick=\"reparer('%s')\">Réparée — remettre en service</button>" % html.escape(b, quote=True)
                           if p["statut"] == "maintenance" and not p.get("reparation_demandee") else "")
                 items.append("<li><strong>%s</strong> — %s%s%s</li>" % (html.escape(b), html.escape(status), detail, action))
