@@ -53,8 +53,13 @@ def armer(client, station, identifiant):
 
 def cloturer(balise, station, t, hors_base):
     p = planches[balise]
+    p["ou"] = station
     if p["statut"] != "maintenance":
-        p["statut"], p["ou"] = "au râtelier", station
+        p["statut"] = "au râtelier"
+    elif p.get("reparation_demandee") and station == p["origine"]:
+        p["statut"] = "au râtelier"
+        p.pop("reparation_demandee", None)
+        note("RÉPARATION VALIDÉE : %s de retour à son râtelier %s" % (balise, station))
     s = sessions.pop(balise, None)
     if s:
         duree, montant = max(0, t - s["debut"]), max(0, t - s["debut"]) / 60 * TARIF_MIN
@@ -93,6 +98,19 @@ def enregistrer_rapport(identifiant, session_id, condition, photo=None):
     note("ÉTAT DE PLANCHE : %s — %s (retour t=%.0f)" % (rapport["balise"], condition, rapport["t"]))
     return rapport, None
 
+def reparer(balise):
+    planche = planches.get(balise)
+    if not planche or planche["statut"] != "maintenance":
+        return None, "Cette planche n'est pas en maintenance."
+    planche["reparation_demandee"] = True
+    if planche.get("ou") == planche["origine"] and balise not in sessions:
+        planche["statut"] = "au râtelier"
+        planche.pop("reparation_demandee", None)
+        note("RÉPARATION VALIDÉE : %s déjà présente à son râtelier %s" % (balise, planche["origine"]))
+        return "Disponible", None
+    note("RÉPARATION TERMINÉE : %s en attente de son râtelier %s" % (balise, planche["origine"]))
+    return "Réparation terminée — en attente du retour au râtelier", None
+
 def retards():
     for balise, s in list(sessions.items()):
         duree = horloge - s["debut"]
@@ -116,6 +134,9 @@ def traiter(ev):
     if balise not in planches: return note("balise inconnue : %s" % balise)
     if type_ == "DEPART":
         p = planches[balise]
+        if p["statut"] == "maintenance":
+            p["ou"] = None
+            return note("ALERTE : départ de %s ignoré, planche en maintenance" % balise)
         if balise in sessions or p["statut"] in ("en mer", "départ ambigu"):
             return note("ALERTE : départ dupliqué ignoré pour %s, déjà associé à une session" % balise)
 
@@ -213,6 +234,12 @@ class Cloud(BaseHTTPRequestHandler):
             rapport, erreur = enregistrer_rapport(str(d["identifiant"]), str(d["session_id"]),
                                                     d.get("condition"), photo)
             return self.json({"erreur": erreur} if erreur else {"rapport": rapport}, 409 if erreur else 200)
+        if u.path == "/api/reparer":
+            d = self.lire_json()
+            if not d or not d.get("balise"):
+                return self.json({"erreur": "Planche manquante."}, 400)
+            statut, erreur = reparer(str(d["balise"]))
+            return self.json({"erreur": erreur} if erreur else {"statut": statut}, 409 if erreur else 200)
         if u.path == "/api/arme":
             d = self.lire_json()
             if not d or not d.get("client") or not d.get("identifiant"): return self.json({"erreur": "Numéro ou session manquant."}, 400)
@@ -242,7 +269,22 @@ class Cloud(BaseHTTPRequestHandler):
                                 html.escape(r["condition"]), r["t"],
                                 " | photo prototype: " + html.escape(r["photo"]) if r.get("photo") else "")
                                for r in rapports_planches[:10]) or "<li>Aucun retour reçu</li>"
-            page = "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=2><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · t = %.0f s</h2><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}</style></body>" % (horloge, rapports, tableau())
+            items = []
+            for b, p in sorted(planches.items()):
+                latest = next((r for r in rapports_planches if r["balise"] == b), None)
+                if p["statut"] == "maintenance":
+                    status = ("Réparation terminée — en attente du retour au râtelier"
+                              if p.get("reparation_demandee") else "En maintenance")
+                elif p["statut"] == "au râtelier":
+                    status = "Disponible"
+                else:
+                    status = p["statut"]
+                detail = ("<br><small>Dernier état : %s%s</small>" %
+                          (html.escape(latest["condition"]), " — " + html.escape(latest.get("photo", "")) if latest.get("photo") else "") if latest else "")
+                action = (" <button type='button' onclick=\"reparer('%s')\">Réparée — remettre en service</button>" % html.escape(b, quote=True)
+                          if p["statut"] == "maintenance" and not p.get("reparation_demandee") else "")
+                items.append("<li><strong>%s</strong> — %s%s%s</li>" % (html.escape(b), html.escape(status), detail, action))
+            page = "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=2><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · t = %.0f s</h2><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>RAPPORTS DE CONDITION</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}</style><script>async function reparer(b){const r=await fetch('/api/reparer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}</script></body>" % (horloge, "".join(items), rapports, tableau())
             return self.repondre(page, "text/html; charset=utf-8")
         if u.path in ("/", "/index.html"): return self.servir("index.html", "text/html; charset=utf-8")
         if u.path in ("/static/style.css", "/static/app.js"): return self.servir(os.path.basename(u.path), "text/css; charset=utf-8" if u.path.endswith("css") else "application/javascript; charset=utf-8")
