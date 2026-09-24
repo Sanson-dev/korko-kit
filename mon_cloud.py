@@ -19,6 +19,23 @@ planches = {b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
 sessions, file_attente, reservations, client_sessions = {}, {}, {}, {}
 rapports_planches = []
 journal, signes, horloge = [], {}, 0.0
+demo_generation = 0
+
+def reinitialiser_demo():
+    """Efface l'état temporaire du cloud et restaure le parc prototype."""
+    global horloge, demo_generation
+    demo_generation += 1
+    sessions.clear()
+    file_attente.clear()
+    reservations.clear()
+    client_sessions.clear()
+    rapports_planches.clear()
+    journal.clear()
+    signes.clear()
+    horloge = 0.0
+    planches.clear()
+    planches.update({b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
+                     for b, s in PARC.items()})
 
 def duree_txt(s):
     s = max(0, int(s))
@@ -208,8 +225,8 @@ def traiter(ev):
 
 def client_json(identifiant):
     e = client_sessions.get(identifiant)
-    if not e: return {"etat": "inconnue", "t": horloge}
-    r = dict(e); r["t"] = horloge
+    if not e: return {"etat": "inconnue", "t": horloge, "generation": demo_generation}
+    r = dict(e); r["t"] = horloge; r["generation"] = demo_generation
     if r["etat"] == "en cours":
         r["duree"] = max(0, horloge - r["depart_a"])
         r["montant"] = r["duree"] / 60 * TARIF_MIN
@@ -256,19 +273,28 @@ class Cloud(BaseHTTPRequestHandler):
                 return self.json({"erreur": "Photo invalide."}, 400)
             rapport, erreur = enregistrer_rapport(str(d["identifiant"]), str(d["session_id"]),
                                                     d.get("condition"), photo)
-            return self.json({"erreur": erreur} if erreur else {"rapport": rapport}, 409 if erreur else 200)
+            return self.json({"erreur": erreur, "generation": demo_generation} if erreur else
+                             {"rapport": rapport, "generation": demo_generation}, 409 if erreur else 200)
         if u.path == "/api/reparer":
             d = self.lire_json()
             if not d or not d.get("balise"):
                 return self.json({"erreur": "Planche manquante."}, 400)
             statut, erreur = reparer(str(d["balise"]))
             return self.json({"erreur": erreur} if erreur else {"statut": statut}, 409 if erreur else 200)
+        if u.path == "/api/admin/reset-demo":
+            d = self.lire_json()
+            if not d or d.get("confirmation") != "REINITIALISER":
+                return self.json({"erreur": "Confirmation requise."}, 400)
+            reinitialiser_demo()
+            return self.json({"message": "Cloud réinitialisé.", "generation": demo_generation})
         if u.path == "/api/arme":
             d = self.lire_json()
             if not d or not d.get("client") or not d.get("identifiant"): return self.json({"erreur": "Numéro ou session manquant."}, 400)
             client = str(d["client"]).strip(); client = client if client.startswith("+") else "+" + client
+            if d.get("generation") != demo_generation:
+                return self.json({"erreur": "La démonstration a été réinitialisée.", "generation": demo_generation}, 409)
             etat, erreur = armer(client, str(d.get("station", "A")), str(d["identifiant"]))
-            return self.json({"erreur": erreur} if erreur else client_json(str(d["identifiant"])), 409 if erreur else 200)
+            return self.json({"erreur": erreur, "generation": demo_generation} if erreur else client_json(str(d["identifiant"])), 409 if erreur else 200)
         if u.path == "/evenements":
             brut = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8")
             for ligne in brut.strip().splitlines():
@@ -278,7 +304,7 @@ class Cloud(BaseHTTPRequestHandler):
         self.repondre("Introuvable", code=404)
     def do_GET(self):
         u, q = urlparse(self.path), parse_qs(urlparse(self.path).query)
-        if u.path in ("/parc", "/api/parc"): return self.json({"t": horloge, "planches": planches, "sessions": sessions})
+        if u.path in ("/parc", "/api/parc"): return self.json({"t": horloge, "generation": demo_generation, "planches": planches, "sessions": sessions})
         if u.path == "/api/client": return self.json(client_json(q.get("identifiant", [""])[0]))
         if u.path == "/arme":
             client = q.get("client", ["+33600000000"])[0].strip(); client = client if client.startswith("+") else "+" + client
@@ -310,7 +336,7 @@ class Cloud(BaseHTTPRequestHandler):
                 action = (" <button type='button' onclick=\"reparer('%s')\">Réparée — remettre en service</button>" % html.escape(b, quote=True)
                           if p["statut"] == "maintenance" and not p.get("reparation_demandee") else "")
                 items.append("<li><strong>%s</strong> — %s%s%s</li>" % (html.escape(b), html.escape(status), detail, action))
-            page = "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=2><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · t = %.0f s</h2><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>RAPPORTS DE CONDITION</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}</style><script>async function reparer(b){const r=await fetch('/api/reparer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}</script></body>" % (horloge, "".join(items), rapports, tableau())
+            page = "<!doctype html><meta charset=utf-8><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · t = %.0f s</h2><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>RAPPORTS DE CONDITION</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><section style='margin-top:32px;padding:18px;border:2px solid #bd744c;border-radius:12px;background:#fffaf0'><h3>DÉMO</h3><button id='reset-start' type='button'>Réinitialiser la démo</button><div id='reset-confirm' hidden><p>Réinitialiser toutes les données temporaires de la démo ?</p><p>Les locations, réservations et états temporaires seront effacés.</p><button id='reset-cancel' type='button'>Annuler</button> <button id='reset-submit' type='button'>Réinitialiser</button></div><p>Efface les locations, réservations, sessions clients, files d'attente, rapports de condition, alertes/journal, compteurs de sorties et signaux de stations. Les états de maintenance et d'inspection sont remis à zéro. Aucun fichier ni simulateur physique n'est modifié.</p><p id='reset-message' role='status' aria-live='polite'></p></section><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}button{padding:10px 14px;cursor:pointer}</style><script>async function reparer(b){const r=await fetch('/api/reparer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}const start=document.getElementById('reset-start'),box=document.getElementById('reset-confirm'),msg=document.getElementById('reset-message');start.onclick=()=>{box.hidden=false;start.disabled=true};document.getElementById('reset-cancel').onclick=()=>{box.hidden=true;start.disabled=false};document.getElementById('reset-submit').onclick=async()=>{const b=document.getElementById('reset-submit');b.disabled=true;try{const r=await fetch('/api/admin/reset-demo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmation:'REINITIALISER'})});const d=await r.json();if(!r.ok)throw Error(d.erreur);sessionStorage.setItem('korko-reset-message',JSON.stringify({message:d.message,until:Date.now()+10000}));location.reload()}catch(e){msg.textContent=e.message;b.disabled=false}};const saved=JSON.parse(sessionStorage.getItem('korko-reset-message')||'null');if(saved&&saved.until>Date.now())msg.textContent=saved.message;else sessionStorage.removeItem('korko-reset-message');function refresh(){setTimeout(()=>{if(box.hidden)location.reload();else refresh()},2000)}refresh();</script></body>" % (horloge, "".join(items), rapports, tableau())
             return self.repondre(page, "text/html; charset=utf-8")
         if u.path in ("/", "/index.html"): return self.servir("index.html", "text/html; charset=utf-8")
         if u.path in ("/static/style.css", "/static/app.js"): return self.servir(os.path.basename(u.path), "text/css; charset=utf-8" if u.path.endswith("css") else "application/javascript; charset=utf-8")
