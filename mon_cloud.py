@@ -3,7 +3,9 @@
 """Cloud KORKO : stations compatibles, expérience client et tableau admin."""
 import json
 import html
+import hashlib
 import os
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -19,6 +21,8 @@ planches = {b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
 sessions, file_attente, reservations, client_sessions = {}, {}, {}, {}
 rapports_planches = []
 journal, signes, horloge = [], {}, 0.0
+dernier_contact = {}
+evenements_recus = set()
 demo_generation = 0
 
 def reinitialiser_demo():
@@ -32,6 +36,8 @@ def reinitialiser_demo():
     rapports_planches.clear()
     journal.clear()
     signes.clear()
+    dernier_contact.clear()
+    evenements_recus.clear()
     horloge = 0.0
     planches.clear()
     planches.update({b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
@@ -162,6 +168,7 @@ def traiter(ev):
     type_, station = ev.get("evenement"), ev.get("station")
     if station not in signes: note("station %s branchée" % station)
     signes[station] = ev.get("t", horloge)
+    dernier_contact[station] = time.monotonic()
     expirations_reservations()
     if type_ == "TIC":
         retards(); return
@@ -236,7 +243,9 @@ def client_json(identifiant):
 
 def tableau():
     lignes = ["STATIONS", "--------"]
-    lignes += ["%s   dernier message à t = %.0f s" % (st, t) for st, t in sorted(signes.items())] or ["Aucune station branchée"]
+    lignes += ["%s   %s / dernière nouvelle t=%.0f s" %
+               (st, "Connectée" if time.monotonic() - dernier_contact.get(st, 0) < 5 else "En retard", t)
+               for st, t in sorted(signes.items())] or ["Aucune station branchée"]
     lignes += ["", "PARC", "----"]
     for b, p in sorted(planches.items()):
         s = sessions.get(b)
@@ -297,10 +306,29 @@ class Cloud(BaseHTTPRequestHandler):
             return self.json({"erreur": erreur, "generation": demo_generation} if erreur else client_json(str(d["identifiant"])), 409 if erreur else 200)
         if u.path == "/evenements":
             brut = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8")
-            for ligne in brut.strip().splitlines():
-                try: traiter(json.loads(ligne))
-                except Exception as e: note("événement illisible : %s" % e)
-            return self.repondre("ok")
+            try:
+                events = [json.loads(ligne) for ligne in brut.strip().splitlines() if ligne.strip()]
+                if not events:
+                    return self.json({"erreur": "Événement manquant."}, 400)
+                for ev in events:
+                    if not isinstance(ev, dict):
+                        return self.json({"erreur": "Événement invalide."}, 400)
+                    if ev.get("evenement") == "TIC":
+                        traiter(ev)
+                        continue
+                    event_id = hashlib.sha256(
+                        "\0".join(str(ev.get(k, "")) for k in
+                                  ("station", "evenement", "balise", "t")).encode("utf-8")
+                    ).hexdigest()
+                    if event_id in evenements_recus:
+                        continue
+                    traiter(ev)
+                    evenements_recus.add(event_id)
+            except (ValueError, UnicodeDecodeError) as e:
+                return self.json({"erreur": "Événement illisible: %s" % e}, 400)
+            except Exception as e:
+                return self.json({"erreur": "Traitement impossible: %s" % e}, 500)
+            return self.json({"ok": True})
         self.repondre("Introuvable", code=404)
     def do_GET(self):
         u, q = urlparse(self.path), parse_qs(urlparse(self.path).query)

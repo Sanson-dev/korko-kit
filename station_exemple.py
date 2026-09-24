@@ -136,11 +136,12 @@ class Station(Detecteur):
 
     def envoyer(self, evenement):
         try:
-            urllib.request.urlopen(
+            with urllib.request.urlopen(
                 urllib.request.Request(
                     CLOUD, json.dumps(evenement).encode("utf-8"),
-                    {"Content-Type": "application/json"}), timeout=0.5)
-            ok = True
+                    {"Content-Type": "application/json"}), timeout=0.5) as response:
+                ok = 200 <= response.status < 300
+                response.read()
         except Exception:
             ok = False
         if ok != self.cloud_ok:                  # on ne prévient qu'au changement
