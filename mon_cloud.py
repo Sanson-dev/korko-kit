@@ -7,6 +7,9 @@ import hashlib
 import os
 import time
 import uuid
+import sqlite3
+import hmac
+import base64
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -24,6 +27,36 @@ journal, signes, horloge = [], {}, 0.0
 dernier_contact = {}
 evenements_recus = set()
 demo_generation = 0
+DB_PATH = os.environ.get("KORKO_CLOUD_DB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "korko_cloud.sqlite3"))
+OFFLINE_SECRET = os.environ.get("KORKO_OFFLINE_SECRET", "korko-hackathon-offline-secret")
+
+def autorisation_hors_ligne(identifiant, station):
+    payload = json.dumps({"authorization_id": identifiant, "station_id": station,
+                          "expires": int(time.time()) + 30 * 86400}, separators=(",", ":")).encode()
+    encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    signature = hmac.new(OFFLINE_SECRET.encode(), encoded.encode(), hashlib.sha256).hexdigest()
+    return encoded + "." + signature
+
+def sauvegarder():
+    data = {k: globals()[k] for k in ("planches", "sessions", "file_attente", "reservations", "client_sessions", "rapports_planches", "journal", "signes", "horloge", "demo_generation")}
+    data["evenements_recus"] = list(evenements_recus)
+    with sqlite3.connect(DB_PATH, timeout=10) as db:
+        db.execute("CREATE TABLE IF NOT EXISTS etat (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)")
+        db.execute("INSERT INTO etat(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (json.dumps(data, ensure_ascii=False),))
+
+def charger():
+    global horloge, demo_generation, evenements_recus
+    if not os.path.exists(DB_PATH): return
+    try:
+        with sqlite3.connect(DB_PATH) as db: row = db.execute("SELECT data FROM etat WHERE id=1").fetchone()
+        if not row: return
+        data = json.loads(row[0])
+        for key in ("planches", "sessions", "file_attente", "reservations", "client_sessions", "rapports_planches", "journal", "signes"):
+            globals()[key] = data.get(key, globals()[key])
+        horloge = data.get("horloge", 0.0); demo_generation = data.get("demo_generation", 0)
+        evenements_recus = set(data.get("evenements_recus", []))
+    except (sqlite3.Error, ValueError) as exc:
+        raise RuntimeError("Impossible de charger l'état cloud %s: %s" % (DB_PATH, exc))
 
 def reinitialiser_demo():
     """Efface l'état temporaire du cloud et restaure le parc prototype."""
@@ -42,6 +75,7 @@ def reinitialiser_demo():
     planches.clear()
     planches.update({b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
                      for b, s in PARC.items()})
+    sauvegarder()
 
 def duree_txt(s):
     s = max(0, int(s))
@@ -178,6 +212,21 @@ def traiter(ev):
     expirations_reservations()
     if type_ == "TIC":
         retards(); return
+    if type_ == "OFFLINE_RESERVATION":
+        identifiant = str(ev.get("authorization_id", ""))
+        balise = ev.get("balise")
+        if not identifiant or balise not in planches:
+            return note("réservation hors ligne invalide")
+        if identifiant not in client_sessions or client_sessions[identifiant].get("etat") in ("retournée", "expirée"):
+            client_sessions[identifiant] = {"client": "Client autorisé hors ligne", "station": station,
+                "balise": balise, "etat": "armée", "armee_a": ev["t"],
+                "reservation_t": ev["t"], "reservation_status": "Réservée",
+                "session_id": ev.get("offline_reservation_id", uuid.uuid4().hex),
+                "offline": True}
+            reservations[balise] = identifiant
+            planches[balise]["statut"] = "réservée"
+            note("RÉSERVATION HORS LIGNE %s → %s" % (identifiant, balise))
+        return
     balise = ev.get("balise")
     if balise not in planches: return note("balise inconnue : %s" % balise)
     if type_ == "DEPART":
@@ -288,6 +337,7 @@ class Cloud(BaseHTTPRequestHandler):
                 return self.json({"erreur": "Photo invalide."}, 400)
             rapport, erreur = enregistrer_rapport(str(d["identifiant"]), str(d["session_id"]),
                                                     d.get("condition"), photo)
+            sauvegarder()
             return self.json({"erreur": erreur, "generation": demo_generation} if erreur else
                              {"rapport": rapport, "generation": demo_generation}, 409 if erreur else 200)
         if u.path == "/api/reparer":
@@ -295,6 +345,7 @@ class Cloud(BaseHTTPRequestHandler):
             if not d or not d.get("balise"):
                 return self.json({"erreur": "Planche manquante."}, 400)
             statut, erreur = reparer(str(d["balise"]))
+            sauvegarder()
             return self.json({"erreur": erreur} if erreur else {"statut": statut}, 409 if erreur else 200)
         if u.path == "/api/admin/reset-demo":
             d = self.lire_json()
@@ -309,7 +360,12 @@ class Cloud(BaseHTTPRequestHandler):
             if d.get("generation") != demo_generation:
                 return self.json({"erreur": "La démonstration a été réinitialisée.", "generation": demo_generation}, 409)
             etat, erreur = armer(client, str(d.get("station", "A")), str(d["identifiant"]))
-            return self.json({"erreur": erreur, "generation": demo_generation} if erreur else client_json(str(d["identifiant"])), 409 if erreur else 200)
+            sauvegarder()
+            if not erreur:
+                etat = client_json(str(d["identifiant"]))
+                etat["offline_authorization"] = autorisation_hors_ligne(str(d["identifiant"]), str(d.get("station", "A")))
+                return self.json(etat)
+            return self.json({"erreur": erreur, "generation": demo_generation}, 409)
         if u.path == "/evenements":
             brut = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8")
             try:
@@ -321,8 +377,9 @@ class Cloud(BaseHTTPRequestHandler):
                         return self.json({"erreur": "Événement invalide."}, 400)
                     if ev.get("evenement") == "TIC":
                         traiter(ev)
+                        sauvegarder()
                         continue
-                    event_id = hashlib.sha256(
+                    event_id = ev.get("event_id") or hashlib.sha256(
                         "\0".join(str(ev.get(k, "")) for k in
                                   ("station", "evenement", "balise", "t")).encode("utf-8")
                     ).hexdigest()
@@ -330,6 +387,7 @@ class Cloud(BaseHTTPRequestHandler):
                         continue
                     traiter(ev)
                     evenements_recus.add(event_id)
+                    sauvegarder()
             except (ValueError, UnicodeDecodeError) as e:
                 return self.json({"erreur": "Événement illisible: %s" % e}, 400)
             except Exception as e:
@@ -382,6 +440,7 @@ class Cloud(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
 
 if __name__ == "__main__":
+    charger()
     print("Cloud KORKO sur http://0.0.0.0:%d" % PORT)
     print("  expérience client : /     administration : /admin     parc brut : /parc")
     print("  stations : POST /evenements\n")
