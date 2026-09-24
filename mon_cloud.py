@@ -24,6 +24,7 @@ planches = {b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
 sessions, file_attente, reservations, client_sessions = {}, {}, {}, {}
 rapports_planches = []
 journal, signes, horloge = [], {}, 0.0
+rebalancements_actifs, historique_etrangeres = {}, []
 dernier_contact = {}
 evenements_recus = set()
 demo_generation = 0
@@ -38,7 +39,7 @@ def autorisation_hors_ligne(identifiant, station):
     return encoded + "." + signature
 
 def sauvegarder():
-    data = {k: globals()[k] for k in ("planches", "sessions", "file_attente", "reservations", "client_sessions", "rapports_planches", "journal", "signes", "horloge", "demo_generation")}
+    data = {k: globals()[k] for k in ("planches", "sessions", "file_attente", "reservations", "client_sessions", "rapports_planches", "journal", "signes", "horloge", "demo_generation", "rebalancements_actifs", "historique_etrangeres")}
     data["evenements_recus"] = list(evenements_recus)
     with sqlite3.connect(DB_PATH, timeout=10) as db:
         db.execute("CREATE TABLE IF NOT EXISTS etat (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)")
@@ -51,7 +52,7 @@ def charger():
         with sqlite3.connect(DB_PATH) as db: row = db.execute("SELECT data FROM etat WHERE id=1").fetchone()
         if not row: return
         data = json.loads(row[0])
-        for key in ("planches", "sessions", "file_attente", "reservations", "client_sessions", "rapports_planches", "journal", "signes"):
+        for key in ("planches", "sessions", "file_attente", "reservations", "client_sessions", "rapports_planches", "journal", "signes", "rebalancements_actifs", "historique_etrangeres"):
             globals()[key] = data.get(key, globals()[key])
         horloge = data.get("horloge", 0.0); demo_generation = data.get("demo_generation", 0)
         evenements_recus = set(data.get("evenements_recus", []))
@@ -67,6 +68,8 @@ def reinitialiser_demo():
     reservations.clear()
     client_sessions.clear()
     rapports_planches.clear()
+    rebalancements_actifs.clear()
+    historique_etrangeres.clear()
     journal.clear()
     signes.clear()
     dernier_contact.clear()
@@ -136,6 +139,32 @@ def cloturer(balise, station, t, hors_base):
             sms(s["client"], "Merci ! %s, %s, %.2f €. Caution libérée." % (balise, duree_txt(duree), montant))
     if hors_base:
         note("RÉÉQUILIBRAGE : %s rendue en %s, sa base est %s" % (balise, station, p["origine"]))
+
+def signaler_etrangere(balise, station, t, event_id):
+    """Enregistre un constat physique étranger sans toucher aux locations."""
+    p = planches[balise]
+    origine = p["origine"]
+    if station == origine:
+        return note("ETRANGERE incohérente ignorée : %s détectée à sa station %s" % (balise, station))
+    p["ou"] = station
+    p["statut"] = "A_REEQUILIBRER"
+    # Une alerte active par planche; les événements sources restent en historique.
+    if balise not in rebalancements_actifs:
+        incident = {"balise": balise, "origine": origine, "station": station,
+                    "t": t, "event_id": event_id}
+        rebalancements_actifs[balise] = incident
+        historique_etrangeres.append(dict(incident))
+        note("ETRANGERE : %s, base %s, détectée en %s (t=%.1f)" % (balise, origine, station, t))
+
+def confirmer_rebalancement(balise):
+    incident = rebalancements_actifs.pop(balise, None)
+    if not incident:
+        return None, "Aucun rééquilibrage actif pour cette planche."
+    p = planches[balise]
+    p["ou"] = p["origine"]
+    if p["statut"] == "A_REEQUILIBRER": p["statut"] = "au râtelier"
+    note("RÉÉQUILIBRAGE CONFIRMÉ : %s rétablie à sa station %s" % (balise, p["origine"]))
+    return "Rééquilibrage confirmé", None
 
 def enregistrer_rapport(identifiant, session_id, condition, photo=None):
     experience = client_sessions.get(identifiant)
@@ -281,9 +310,12 @@ def traiter(ev):
         p["statut"], p["ou"], p["sorties"] = "en mer", None, p["sorties"] + 1
         sessions[balise] = {"client": client, "debut": ev["t"], "rappel": False, "identifiant": identifiant}
         note("DÉPART %s depuis %s — %s" % (balise, station, client))
-    elif type_ in ("RETOUR", "ETRANGERE"):
-        note("%s %s en %s" % (type_, balise, station))
-        cloturer(balise, station, ev["t"], type_ == "ETRANGERE")
+    elif type_ == "RETOUR":
+        note("RETOUR %s en %s" % (balise, station))
+        cloturer(balise, station, ev["t"], False)
+    elif type_ == "ETRANGERE":
+        event_id = ev.get("event_id") or hashlib.sha256("\0".join(str(ev.get(k, "")) for k in ("station", "evenement", "balise", "t")).encode("utf-8")).hexdigest()
+        signaler_etrangere(balise, station, ev["t"], event_id)
 
 def client_json(identifiant):
     e = client_sessions.get(identifiant)
@@ -347,6 +379,13 @@ class Cloud(BaseHTTPRequestHandler):
             statut, erreur = reparer(str(d["balise"]))
             sauvegarder()
             return self.json({"erreur": erreur} if erreur else {"statut": statut}, 409 if erreur else 200)
+        if u.path == "/api/rebalancer":
+            d = self.lire_json()
+            if not d or not d.get("balise") or str(d["balise"]) not in planches:
+                return self.json({"erreur": "Planche invalide."}, 400)
+            statut, erreur = confirmer_rebalancement(str(d["balise"]))
+            sauvegarder()
+            return self.json({"erreur": erreur} if erreur else {"statut": statut}, 409 if erreur else 200)
         if u.path == "/api/admin/reset-demo":
             d = self.lire_json()
             if not d or d.get("confirmation") != "REINITIALISER":
@@ -405,6 +444,11 @@ class Cloud(BaseHTTPRequestHandler):
             file_attente.setdefault(station, []).append(client); note("%s arme (mode historique) en station %s" % (client, station))
             return self.repondre("Prends la planche %s." % balise)
         if u.path == "/admin":
+            alertes = "".join(
+                "<li class='foreign'><strong>%s</strong> — Station d'origine : <strong>%s</strong> · Détectée à : <strong>%s</strong> · Depuis t = %.0f s "
+                "<button type='button' onclick=\"rebalancer('%s')\">Rééquilibrage effectué</button></li>" %
+                (html.escape(e["balise"]), html.escape(e["origine"]), html.escape(e["station"]), e["t"], html.escape(e["balise"], quote=True))
+                for e in rebalancements_actifs.values()) or "<li>Aucune planche à rééquilibrer</li>"
             rapports = "".join("<li class='%s'>%s | %s | retour t=%.0f%s</li>" %
                                ("damaged" if r["condition"] == "DAMAGED" else "", html.escape(r["balise"]),
                                 html.escape(r["condition"]), r["t"],
@@ -414,7 +458,9 @@ class Cloud(BaseHTTPRequestHandler):
             for b, p in sorted(planches.items()):
                 latest = next((r for r in rapports_planches if r["balise"] == b), None)
                 reservation = next((e for e in reversed(list(client_sessions.values())) if e.get("balise") == b and e.get("reservation_status") in ("Réservée", "En cours", "Expirée")), None)
-                if p["statut"] == "maintenance":
+                if p["statut"] == "A_REEQUILIBRER":
+                    status = "À rééquilibrer — détectée à %s (base %s)" % (p.get("ou"), p["origine"])
+                elif p["statut"] == "maintenance":
                     status = ("Réparation terminée — en attente du retour au râtelier"
                               if p.get("reparation_demandee") else "En maintenance")
                 elif p["statut"] == "au râtelier":
@@ -428,7 +474,7 @@ class Cloud(BaseHTTPRequestHandler):
                 action = (" <button type='button' onclick=\"reparer('%s')\">Réparée — remettre en service</button>" % html.escape(b, quote=True)
                           if p["statut"] == "maintenance" and not p.get("reparation_demandee") else "")
                 items.append("<li><strong>%s</strong> — %s%s%s</li>" % (html.escape(b), html.escape(status), detail, action))
-            page = "<!doctype html><meta charset=utf-8><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · t = %.0f s</h2><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>RAPPORTS DE CONDITION</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><section style='margin-top:32px;padding:18px;border:2px solid #bd744c;border-radius:12px;background:#fffaf0'><h3>DÉMO</h3><button id='reset-start' type='button'>Réinitialiser la démo</button><div id='reset-confirm' hidden><p>Réinitialiser toutes les données temporaires de la démo ?</p><p>Les locations, réservations et états temporaires seront effacés.</p><button id='reset-cancel' type='button'>Annuler</button> <button id='reset-submit' type='button'>Réinitialiser</button></div><p>Efface les locations, réservations, sessions clients, files d'attente, rapports de condition, alertes/journal, compteurs de sorties et signaux de stations. Les états de maintenance et d'inspection sont remis à zéro. Aucun fichier ni simulateur physique n'est modifié.</p><p id='reset-message' role='status' aria-live='polite'></p></section><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}button{padding:10px 14px;cursor:pointer}</style><script>async function reparer(b){const r=await fetch('/api/reparer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}const start=document.getElementById('reset-start'),box=document.getElementById('reset-confirm'),msg=document.getElementById('reset-message');start.onclick=()=>{box.hidden=false;start.disabled=true};document.getElementById('reset-cancel').onclick=()=>{box.hidden=true;start.disabled=false};document.getElementById('reset-submit').onclick=async()=>{const b=document.getElementById('reset-submit');b.disabled=true;try{const r=await fetch('/api/admin/reset-demo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmation:'REINITIALISER'})});const d=await r.json();if(!r.ok)throw Error(d.erreur);sessionStorage.setItem('korko-reset-message',JSON.stringify({message:d.message,until:Date.now()+10000}));location.reload()}catch(e){msg.textContent=e.message;b.disabled=false}};const saved=JSON.parse(sessionStorage.getItem('korko-reset-message')||'null');if(saved&&saved.until>Date.now())msg.textContent=saved.message;else sessionStorage.removeItem('korko-reset-message');function refresh(){setTimeout(()=>{if(box.hidden)location.reload();else refresh()},2000)}refresh();</script></body>" % (horloge, "".join(items), rapports, tableau())
+            page = "<!doctype html><meta charset=utf-8><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · t = %.0f s</h2><section class='foreign'><h3>À RÉÉQUILIBRER</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>RAPPORTS DE CONDITION</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><section style='margin-top:32px;padding:18px;border:2px solid #bd744c;border-radius:12px;background:#fffaf0'><h3>DÉMO</h3><button id='reset-start' type='button'>Réinitialiser la démo</button><div id='reset-confirm' hidden><p>Réinitialiser toutes les données temporaires de la démo ?</p><p>Les locations, réservations et états temporaires seront effacés.</p><button id='reset-cancel' type='button'>Annuler</button> <button id='reset-submit' type='button'>Réinitialiser</button></div><p>Efface les locations, réservations, sessions clients, files d'attente, rapports de condition, alertes/journal, compteurs de sorties et signaux de stations. Les états de maintenance et d'inspection sont remis à zéro. Aucun fichier ni simulateur physique n'est modifié.</p><p id='reset-message' role='status' aria-live='polite'></p></section><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}.foreign{padding:12px 16px;border:2px solid #a13225;border-radius:10px;background:#f7ded7;color:#76251c}button{padding:10px 14px;cursor:pointer}</style><script>async function reparer(b){const r=await fetch('/api/reparer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}async function rebalancer(b){const r=await fetch('/api/rebalancer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}const start=document.getElementById('reset-start'),box=document.getElementById('reset-confirm'),msg=document.getElementById('reset-message');start.onclick=()=>{box.hidden=false;start.disabled=true};document.getElementById('reset-cancel').onclick=()=>{box.hidden=true;start.disabled=false};document.getElementById('reset-submit').onclick=async()=>{const b=document.getElementById('reset-submit');b.disabled=true;try{const r=await fetch('/api/admin/reset-demo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmation:'REINITIALISER'})});const d=await r.json();if(!r.ok)throw Error(d.erreur);sessionStorage.setItem('korko-reset-message',JSON.stringify({message:d.message,until:Date.now()+10000}));location.reload()}catch(e){msg.textContent=e.message;b.disabled=false}};const saved=JSON.parse(sessionStorage.getItem('korko-reset-message')||'null');if(saved&&saved.until>Date.now())msg.textContent=saved.message;else sessionStorage.removeItem('korko-reset-message');function refresh(){setTimeout(()=>{if(box.hidden)location.reload();else refresh()},2000)}refresh();</script></body>" % (horloge, alertes, "".join(items), rapports, tableau())
             return self.repondre(page, "text/html; charset=utf-8")
         if u.path in ("/", "/index.html"): return self.servir("index.html", "text/html; charset=utf-8")
         if u.path in ("/static/style.css", "/static/app.js"): return self.servir(os.path.basename(u.path), "text/css; charset=utf-8" if u.path.endswith("css") else "application/javascript; charset=utf-8")

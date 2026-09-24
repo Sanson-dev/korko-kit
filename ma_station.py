@@ -81,6 +81,8 @@ class Station(Detecteur):
                 for reservation in self.offline_reservations.values():
                     if reservation.get("balise") == ev.get("balise"):
                         reservation["status"] = "TERMINEE"; reservation["retour_t"] = ev.get("t")
+            elif ev.get("evenement") == "ETRANGERE":
+                self.local_states[ev.get("balise")] = "A_REEQUILIBRER"
         print("station_exemple : décisions envoyées à %s" % CLOUD, file=sys.stderr)
 
     # -- un paquet radio arrive -------------------------------------------
@@ -113,11 +115,13 @@ class Station(Detecteur):
         {"DEPART": self.depart, "RETOUR": self.retour,
          "ETRANGERE": self.etrangere}[type_](balise, t, self.station)
         with lock:
-            self.local_states[balise] = "en mer" if type_ == "DEPART" else "au râtelier"
-            for reservation in self.offline_reservations.values():
-                if reservation.get("balise") == balise and reservation.get("status") in ("ARMEE", "EN_COURS"):
-                    reservation["status"] = "EN_COURS" if type_ == "DEPART" else "TERMINEE"
-                    reservation["depart_t" if type_ == "DEPART" else "retour_t"] = t
+            self.local_states[balise] = ("en mer" if type_ == "DEPART" else
+                                         "A_REEQUILIBRER" if type_ == "ETRANGERE" else "au râtelier")
+            if type_ != "ETRANGERE":
+                for reservation in self.offline_reservations.values():
+                    if reservation.get("balise") == balise and reservation.get("status") in ("ARMEE", "EN_COURS"):
+                        reservation["status"] = "EN_COURS" if type_ == "DEPART" else "TERMINEE"
+                        reservation["depart_t" if type_ == "DEPART" else "retour_t"] = t
             self.sauver_etat()
         event = {"t": t, "station": self.station, "balise": balise, "evenement": type_}
         event["event_id"] = hashlib.sha256("\0".join(str(event.get(k, "")) for k in ("station", "evenement", "balise", "t")).encode()).hexdigest()
