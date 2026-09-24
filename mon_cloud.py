@@ -91,7 +91,13 @@ def cloturer(balise, station, t, hors_base):
         identifiant = s.get("identifiant")
         if identifiant in client_sessions:
             client_sessions[identifiant].update({"etat": "retournée", "retour_a": t, "duree": duree,
-                                                  "montant": montant, "retour_station": station})
+                                                  "montant": montant, "retour_station": station,
+                                                  "reservation_status": "Terminée"})
+            # A reservation can be reassigned to the board actually taken.
+            # Clear every mapping for this customer when the rental closes.
+            for reservee, proprietaire in list(reservations.items()):
+                if proprietaire == identifiant:
+                    reservations.pop(reservee, None)
         if not s["client"].startswith("Départ ambigu"):
             sms(s["client"], "Merci ! %s, %s, %.2f €. Caution libérée." % (balise, duree_txt(duree), montant))
     if hors_base:
@@ -187,7 +193,7 @@ def traiter(ev):
         if experience and experience["etat"] == "armée" and experience["station"] == station:
             reservations.pop(balise, None)
             client = experience["client"]
-            experience.update({"etat": "en cours", "reservation_status": "En cours", "depart_a": ev["t"]})
+            experience.update({"etat": "en cours", "reservation_status": "Consommée", "depart_a": ev["t"]})
         elif (not identifiant and p["statut"] == "au râtelier" and p["ou"] == station
               and balise not in sessions):
             candidates = [(i, e) for i, e in client_sessions.items()
@@ -207,7 +213,7 @@ def traiter(ev):
                     note("PLANCHE MISE À JOUR : %s -> actual departure %s (%s)" % (ancien, balise, experience["client"]))
                     reservations.pop(balise, None)
                     client = experience["client"]
-                    experience.update({"etat": "en cours", "reservation_status": "En cours", "depart_a": ev["t"]})
+                    experience.update({"etat": "en cours", "reservation_status": "Consommée", "depart_a": ev["t"]})
                 else:
                     candidates.append((None, {}))
             if len(candidates) > 1 or (candidates and legacy):
