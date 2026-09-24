@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 """Cloud KORKO : stations compatibles, expérience client et tableau admin."""
 import json
+import html
 import os
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -14,6 +16,7 @@ PARC = {"korko-01": "A", "korko-02": "A", "korko-03": "B", "korko-04": "B",
 planches = {b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
             for b, s in PARC.items()}
 sessions, file_attente, reservations, client_sessions = {}, {}, {}, {}
+rapports_planches = []
 journal, signes, horloge = [], {}, 0.0
 
 def duree_txt(s):
@@ -29,7 +32,8 @@ def sms(client, texte):
 
 def suggestion(station):
     dispo = [b for b, p in planches.items()
-             if p["statut"] == "au râtelier" and p["ou"] == station and b not in sessions]
+             if p["statut"] == "au râtelier" and p["ou"] == station
+             and b not in sessions and b not in reservations]
     return min(dispo, key=lambda b: planches[b]["sorties"]) if dispo else None
 
 def armer(client, station, identifiant):
@@ -41,23 +45,53 @@ def armer(client, station, identifiant):
         return None, "Plus de planche disponible à la station %s." % station
     planches[balise]["statut"] = "réservée"
     reservations[balise] = identifiant
-    etat = {"client": client, "station": station, "balise": balise, "etat": "armée", "armee_a": horloge}
+    etat = {"client": client, "station": station, "balise": balise, "etat": "armée",
+            "armee_a": horloge, "session_id": uuid.uuid4().hex}
     client_sessions[identifiant] = etat
     note("%s arme en station %s → %s" % (client, station, balise))
     return etat, None
 
 def cloturer(balise, station, t, hors_base):
     p = planches[balise]
-    p["statut"], p["ou"] = "au râtelier", station
+    if p["statut"] != "maintenance":
+        p["statut"], p["ou"] = "au râtelier", station
     s = sessions.pop(balise, None)
     if s:
         duree, montant = max(0, t - s["debut"]), max(0, t - s["debut"]) / 60 * TARIF_MIN
         identifiant = s.get("identifiant")
         if identifiant in client_sessions:
-            client_sessions[identifiant].update({"etat": "retournée", "retour_a": t, "duree": duree, "montant": montant})
-        sms(s["client"], "Merci ! %s, %s, %.2f €. Caution libérée." % (balise, duree_txt(duree), montant))
+            client_sessions[identifiant].update({"etat": "retournée", "retour_a": t, "duree": duree,
+                                                  "montant": montant, "retour_station": station})
+        if not s["client"].startswith("Départ ambigu"):
+            sms(s["client"], "Merci ! %s, %s, %.2f €. Caution libérée." % (balise, duree_txt(duree), montant))
     if hors_base:
         note("RÉÉQUILIBRAGE : %s rendue en %s, sa base est %s" % (balise, station, p["origine"]))
+
+def enregistrer_rapport(identifiant, session_id, condition, photo=None):
+    experience = client_sessions.get(identifiant)
+    if not experience or experience.get("etat") != "retournée" or experience.get("session_id") != session_id:
+        return None, "Cette session n'est plus disponible."
+    if condition not in ("OK", "MINOR", "DAMAGED"):
+        return None, "Choisissez un état de planche."
+    if any(r["session_id"] == session_id for r in rapports_planches):
+        return None, "Merci, votre retour a déjà été envoyé."
+    rapport = {"session_id": session_id, "balise": experience["balise"],
+               "station": experience.get("retour_station", experience["station"]),
+               "t": experience["retour_a"], "condition": condition}
+    if photo:
+        rapport["photo"] = photo[:255]
+    rapports_planches.insert(0, rapport)
+    planche = planches[rapport["balise"]]
+    if condition == "MINOR":
+        planche["inspection"] = True
+    elif condition == "OK":
+        planche.pop("inspection", None)
+    else:
+        planche["statut"] = "maintenance"
+        planche.pop("inspection", None)
+    experience["rapport_condition"] = condition
+    note("ÉTAT DE PLANCHE : %s — %s (retour t=%.0f)" % (rapport["balise"], condition, rapport["t"]))
+    return rapport, None
 
 def retards():
     for balise, s in list(sessions.items()):
@@ -81,18 +115,52 @@ def traiter(ev):
     balise = ev.get("balise")
     if balise not in planches: return note("balise inconnue : %s" % balise)
     if type_ == "DEPART":
-        p = planches[balise]; p["statut"], p["ou"], p["sorties"] = "en mer", None, p["sorties"] + 1
-        identifiant = reservations.pop(balise, None)
-        if identifiant:
-            experience = client_sessions.get(identifiant)
+        p = planches[balise]
+        if balise in sessions or p["statut"] in ("en mer", "départ ambigu"):
+            return note("ALERTE : départ dupliqué ignoré pour %s, déjà associé à une session" % balise)
+
+        identifiant = reservations.get(balise)
+        experience = client_sessions.get(identifiant) if identifiant else None
+        if experience and experience["etat"] == "armée" and experience["station"] == station:
+            reservations.pop(balise, None)
             client = experience["client"]
             experience.update({"etat": "en cours", "depart_a": ev["t"]})
-        else:
-            attente = file_attente.setdefault(station, [])
-            if not attente:
+        elif (not identifiant and p["statut"] == "au râtelier" and p["ou"] == station
+              and balise not in sessions):
+            candidates = [(i, e) for i, e in client_sessions.items()
+                          if e["etat"] == "armée" and e["station"] == station]
+            legacy = file_attente.setdefault(station, [])
+            if len(candidates) == 1 and not legacy:
+                identifiant, experience = candidates[0]
+                ancien = experience["balise"]
+                if (ancien in reservations and reservations[ancien] == identifiant
+                        and ancien not in sessions and planches[ancien]["statut"] == "réservée"):
+                    del reservations[ancien]
+                    planches[ancien]["statut"] = "au râtelier"
+                    planches[ancien]["ou"] = station
+                    reservations[balise] = identifiant
+                    experience.update({"balise": balise, "ecart": "Assigned %s -> actual departure %s" % (ancien, balise),
+                                       "message": "Vous avez pris la planche %s. Aucun problème, votre session a été mise à jour." % balise.replace("korko-", "")})
+                    note("PLANCHE MISE À JOUR : %s -> actual departure %s (%s)" % (ancien, balise, experience["client"]))
+                    reservations.pop(balise, None)
+                    client = experience["client"]
+                    experience.update({"etat": "en cours", "depart_a": ev["t"]})
+                else:
+                    candidates.append((None, {}))
+            if len(candidates) > 1 or (candidates and legacy):
+                client, identifiant = "Départ ambigu — clients à vérifier", None
+                experience = None
+                note("AMBIGUÏTÉ : départ de %s en %s, %d sessions armées et %d client(s) historique(s)" %
+                     (balise, station, len(candidates), len(legacy)))
+            elif not candidates and legacy:
+                client, identifiant = legacy.pop(0), None
+            elif not candidates:
                 p["statut"] = "sortie sans client"
                 return note("ALERTE : %s sortie de %s sans session armée" % (balise, station))
-            client, identifiant = attente.pop(0), None
+        else:
+            return note("ALERTE : départ de %s ignoré, planche indisponible ou réservée" % balise)
+
+        p["statut"], p["ou"], p["sorties"] = "en mer", None, p["sorties"] + 1
         sessions[balise] = {"client": client, "debut": ev["t"], "rappel": False, "identifiant": identifiant}
         note("DÉPART %s depuis %s — %s" % (balise, station, client))
     elif type_ in ("RETOUR", "ETRANGERE"):
@@ -114,7 +182,12 @@ def tableau():
     lignes += ["", "PARC", "----"]
     for b, p in sorted(planches.items()):
         s = sessions.get(b)
-        lignes.append("%-9s %-18s base %s  sorties %-3d %s" % (b, p["statut"], p["origine"], p["sorties"], "→ %s depuis %s" % (s["client"], duree_txt(horloge-s["debut"])) if s else ""))
+        statut = p["statut"] + (" · À INSPECTER" if p.get("inspection") else "")
+        lignes.append("%-9s %-18s base %s  sorties %-3d %s" % (b, statut, p["origine"], p["sorties"], "→ %s depuis %s" % (s["client"], duree_txt(horloge-s["debut"])) if s else ""))
+    lignes += ["", "ÉCARTS D'ATTRIBUTION", "-------------------"]
+    ecarts = ["%s — %s" % (e["client"], e["ecart"]) for e in client_sessions.values() if e.get("ecart")]
+    ambigu = ["Départ ambigu : %s" % b for b, s in sessions.items() if s.get("identifiant") is None and s["client"].startswith("Départ ambigu")]
+    lignes += ecarts + ambigu if ecarts or ambigu else ["Aucun"]
     return "\n".join(lignes + ["", "JOURNAL", "-------"] + journal[:15])
 
 class Cloud(BaseHTTPRequestHandler):
@@ -130,6 +203,16 @@ class Cloud(BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError): return None
     def do_POST(self):
         u = urlparse(self.path)
+        if u.path == "/api/condition":
+            d = self.lire_json()
+            if not d or not d.get("identifiant") or not d.get("session_id"):
+                return self.json({"erreur": "Session manquante."}, 400)
+            photo = d.get("photo")
+            if photo is not None and not isinstance(photo, str):
+                return self.json({"erreur": "Photo invalide."}, 400)
+            rapport, erreur = enregistrer_rapport(str(d["identifiant"]), str(d["session_id"]),
+                                                    d.get("condition"), photo)
+            return self.json({"erreur": erreur} if erreur else {"rapport": rapport}, 409 if erreur else 200)
         if u.path == "/api/arme":
             d = self.lire_json()
             if not d or not d.get("client") or not d.get("identifiant"): return self.json({"erreur": "Numéro ou session manquant."}, 400)
@@ -154,7 +237,13 @@ class Cloud(BaseHTTPRequestHandler):
             file_attente.setdefault(station, []).append(client); note("%s arme (mode historique) en station %s" % (client, station))
             return self.repondre("Prends la planche %s." % balise)
         if u.path == "/admin":
-            return self.repondre("<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=2><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · t = %.0f s</h2><pre>%s</pre></body>" % (horloge, tableau()), "text/html; charset=utf-8")
+            rapports = "".join("<li class='%s'>%s | %s | retour t=%.0f%s</li>" %
+                               ("damaged" if r["condition"] == "DAMAGED" else "", html.escape(r["balise"]),
+                                html.escape(r["condition"]), r["t"],
+                                " | photo prototype: " + html.escape(r["photo"]) if r.get("photo") else "")
+                               for r in rapports_planches[:10]) or "<li>Aucun retour reçu</li>"
+            page = "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=2><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · t = %.0f s</h2><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}</style></body>" % (horloge, rapports, tableau())
+            return self.repondre(page, "text/html; charset=utf-8")
         if u.path in ("/", "/index.html"): return self.servir("index.html", "text/html; charset=utf-8")
         if u.path in ("/static/style.css", "/static/app.js"): return self.servir(os.path.basename(u.path), "text/css; charset=utf-8" if u.path.endswith("css") else "application/javascript; charset=utf-8")
         self.repondre("Introuvable", code=404)
