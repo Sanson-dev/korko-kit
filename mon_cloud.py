@@ -38,6 +38,7 @@ rapports_planches = []
 journal, signes, horloge = [], {}, 0.0
 rebalancements_actifs, historique_etrangeres = {}, []
 dernier_contact = {}
+origines = {}  # station -> instant (time.monotonic) où son horloge valait 0
 evenements_recus = set()
 demo_generation = 0
 # Une connexion par fil (une connexion muette ne bloque plus les autres),
@@ -194,7 +195,9 @@ def cloturer(balise, station, t, hors_base):
             reservations.pop(balise, None)
             return
 
-        if p["statut"] in ("sortie sans client", "retard", "perdue"):
+        if p["statut"] in ("sortie sans client", "retard", "perdue", "A_REEQUILIBRER"):
+            if rebalancements_actifs.pop(balise, None):
+                note("RÉÉQUILIBRAGE : %s revenue à sa station %s" % (balise, station))
             p["ou"] = station
             p["statut"] = "au râtelier"
             reservations.pop(balise, None)
@@ -363,12 +366,30 @@ def reserver_hors_ligne(ev, station):
     planches[balise]["statut"] = "réservée"
     note("RÉSERVATION HORS LIGNE %s → %s" % (etat["client"], balise))
 
+def recaler(station, t, type_):
+    """Ramène le t d'une station sur l'horloge de la première station branchée.
+
+    Chaque station a sa propre horloge (quelques secondes d'écart entre
+    stations réelles) : sans ce recalage, une planche louée en A et rendue
+    en C serait mal facturée. L'écart se mesure à l'arrivée des TIC, que
+    les stations envoient en direct chaque seconde."""
+    if type_ == "TIC":
+        origine = time.monotonic() - t
+        connue = origines.get(station, origine)
+        # le plus petit écart est le moins retardé par le réseau ;
+        # un grand saut veut dire que l'horloge de la station a repris à 0
+        origines[station] = min(connue, origine) if abs(connue - origine) < 5 else origine
+    if station not in origines:
+        return t
+    return t + origines[station] - next(iter(origines.values()))
+
 # --- Traitement centralisé des événements reçus par les stations ---
 def traiter(ev):
     global horloge
     t, type_, station = ev.get("t"), ev.get("evenement"), ev.get("station")
     if not isinstance(t, (int, float)) or not 0 <= t < 4e9:
         return note("événement sans heure valide ignoré : %r" % (ev,))
+    t = ev["t"] = recaler(station, t, type_)
     if t < signes.get(station, t) - 60:
         horloge = t  # simulateur relancé : son horloge repart de 9 h
     horloge = max(horloge, t)

@@ -40,6 +40,11 @@ lock = threading.RLock()
 
 SEUIL = -80        # dBm : plus faible que ça, on ne compte pas la planche
 SILENCE = 10       # secondes sans paquet audible = la planche est partie
+# Plusieurs stations sur la même plage : une station voisine entend parfois
+# une planche au-dessus de SEUIL. Une arrivée n'est donc confirmée qu'après
+# quelques paquets forts d'affilée (une planche au râtelier : -53 à -60 dBm).
+SEUIL_ARRIVEE = -72
+PAQUETS_ARRIVEE = 3
 
 
 # --- État local et logique de détection ---
@@ -49,6 +54,7 @@ class Station(Detecteur):
 
     def __init__(self):
         self.vues = {}         # balise -> t du dernier paquet au-dessus du seuil
+        self.arrivees = {}     # balise -> paquets forts d'affilée, avant d'y croire
         self.station = "A"
         self.journal = []      # événements que le cloud n'a pas encore reçus
         try:
@@ -95,12 +101,25 @@ class Station(Detecteur):
             self.demarre = True                  # supposées au râtelier : celle qui
             for b in planches_de(o.station):     # reste muette sera déclarée partie
                 self.vues[b] = o.t
+        if o.balise not in self.vues and not self.arrivee_confirmee(o):
+            return                               # pas encore sûre qu'elle rentre
         if o.rssi < SEUIL:                       # trop loin : on ignore
             return
         if o.balise not in self.vues:            # on ne la voyait pas : elle rentre
             chez_elle = o.balise in planches_de(o.station)
             self.signaler("RETOUR" if chez_elle else "ETRANGERE", o.balise, o.t)
         self.vues[o.balise] = o.t
+
+    def arrivee_confirmee(self, o):
+        """Vrai au PAQUETS_ARRIVEE-ième paquet fort d'affilée de la balise."""
+        if o.rssi < SEUIL_ARRIVEE:
+            self.arrivees.pop(o.balise, None)
+            return False
+        self.arrivees[o.balise] = self.arrivees.get(o.balise, 0) + 1
+        if self.arrivees[o.balise] < PAQUETS_ARRIVEE:
+            return False
+        del self.arrivees[o.balise]
+        return True
 
     # -- appelée même quand plus rien n'arrive ----------------------------
     def tic(self, t):

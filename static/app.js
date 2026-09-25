@@ -8,7 +8,9 @@
  * Le serveur ne reçoit jamais le numéro complet de la carte ni son CVC.
  */
 
-const STATION = 'A';
+/* Le QR code de chaque borne ouvre l'appli sur sa station : « /?station=C ». */
+const STATION_DEMANDEE = new URLSearchParams(location.search).get('station');
+const STATION = /^[A-Z]$/.test(STATION_DEMANDEE) ? STATION_DEMANDEE : 'A';
 const TARIF_MINUTE = 0.2;
 const INTERVALLE_SONDAGE = 1200;
 const DELAI_SONDAGE = 6000;
@@ -19,6 +21,8 @@ const CLE_GENERATION = 'korko-generation';
 const CLE_AUTORISATION = 'korko-offline-authorization';
 const CLE_RESERVATION_LOCALE = 'korko-reservation-locale';
 const CLE_SESSION_EN_LIGNE = 'korko-session-en-ligne';
+const CLE_SESSIONS_FERMEES = 'korko-dismissed-session';
+const ETATS_CLOS = ['retournée', 'caution débitée', 'annulée'];
 const MESSAGE_RESEAU = 'Connexion impossible. Vérifiez le réseau et réessayez.';
 const MESSAGE_STATION = 'La station ne répond pas. Réessayez dans un instant.';
 const MESSAGE_REINITIALISATION = 'La démonstration a été réinitialisée.';
@@ -175,6 +179,19 @@ function lireJson(cle) {
 
 function clientMemorise() {
   return lireJson(CLE_CLIENT);
+}
+
+/* Un reçu ou une annulation déjà vus ne reviennent pas au rechargement. */
+function sessionFermee({etat, session_id: session}) {
+  const fermees = lireJson(CLE_SESSIONS_FERMEES) || [];
+  return ETATS_CLOS.includes(etat) && fermees.includes(session);
+}
+
+function fermerSession(session) {
+  const fermees = lireJson(CLE_SESSIONS_FERMEES) || [];
+  if (!session || fermees.includes(session)) return;
+  const dernieres = [...fermees, session].slice(-20);
+  ecrireMemoire(CLE_SESSIONS_FERMEES, JSON.stringify(dernieres));
 }
 
 function nouvelIdentifiant() {
@@ -595,6 +612,8 @@ function afficherEcran(id) {
 
 function naviguer(destination) {
   arreterSondage();
+  fermerSession(vue.sessionAffichee);
+  vue.sessionAffichee = null;
   oublierLocationTerminee();
   element('suivi').hidden = true;
   element('annonce').hidden = true;
@@ -984,16 +1003,20 @@ async function annulerReservation() {
 
 function afficherClient(donnees) {
   retenirSessionEnLigne(donnees);
+  if (sessionFermee(donnees)) return;
   if (donnees.etat === 'annulée') return afficherAnnulation(donnees);
   const afficher = AFFICHAGES[donnees.etat];
   if (!afficher) return;
   afficher(donnees);
   afficherSuivi(donnees);
+  const close = ETATS_CLOS.includes(donnees.etat);
+  vue.sessionAffichee = close ? donnees.session_id : null;
 }
 
 /* Retour sur « Je veux surfer », avec le message d'annulation du cloud. */
-function afficherAnnulation({messages = []}) {
+function afficherAnnulation({messages = [], session_id: session}) {
   naviguer('pret');
+  fermerSession(session);
   const dernier = messages[messages.length - 1];
   afficherAnnonce(dernier && dernier.texte);
 }
