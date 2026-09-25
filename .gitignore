@@ -1,0 +1,8 @@
+korko_cloud.sqlite3
+station_journal.ndjson
+station_offline_state.json
+__pycache__/
+*.pyc
+*:Zone.Identifier
+
+.venv/

@@ -1,0 +1,429 @@
+{
+ "adresse": "0xeb267Fd27cc6222178a3CbF2DadA98d6bd62D2F9",
+ "abi": [
+  {
+   "inputs": [],
+   "stateMutability": "nonpayable",
+   "type": "constructor"
+  },
+  {
+   "inputs": [],
+   "name": "CodeVide",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "address",
+     "name": "appelant",
+     "type": "address"
+    }
+   ],
+   "name": "NonAutorise",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    }
+   ],
+   "name": "PlancheExistante",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    }
+   ],
+   "name": "PlancheInconnue",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    }
+   ],
+   "name": "StationExistante",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    }
+   ],
+   "name": "StationInconnue",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    },
+    {
+     "internalType": "uint32",
+     "name": "nombrePlanches",
+     "type": "uint32"
+    }
+   ],
+   "name": "StationNonVide",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    },
+    {
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    }
+   ],
+   "name": "StationOccupee",
+   "type": "error"
+  },
+  {
+   "anonymous": false,
+   "inputs": [
+    {
+     "indexed": true,
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    },
+    {
+     "indexed": false,
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    },
+    {
+     "indexed": false,
+     "internalType": "uint64",
+     "name": "instantMs",
+     "type": "uint64"
+    }
+   ],
+   "name": "Depart",
+   "type": "event"
+  },
+  {
+   "anonymous": false,
+   "inputs": [
+    {
+     "indexed": true,
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    },
+    {
+     "indexed": false,
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    }
+   ],
+   "name": "PlancheAjoutee",
+   "type": "event"
+  },
+  {
+   "anonymous": false,
+   "inputs": [
+    {
+     "indexed": true,
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    }
+   ],
+   "name": "PlancheRetiree",
+   "type": "event"
+  },
+  {
+   "anonymous": false,
+   "inputs": [
+    {
+     "indexed": true,
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    },
+    {
+     "indexed": false,
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    },
+    {
+     "indexed": false,
+     "internalType": "uint64",
+     "name": "instantMs",
+     "type": "uint64"
+    }
+   ],
+   "name": "Retour",
+   "type": "event"
+  },
+  {
+   "anonymous": false,
+   "inputs": [
+    {
+     "indexed": false,
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    }
+   ],
+   "name": "StationAjoutee",
+   "type": "event"
+  },
+  {
+   "anonymous": false,
+   "inputs": [
+    {
+     "indexed": false,
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    }
+   ],
+   "name": "StationRetiree",
+   "type": "event"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    },
+    {
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    }
+   ],
+   "name": "ajouterPlanche",
+   "outputs": [],
+   "stateMutability": "nonpayable",
+   "type": "function"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "string",
+     "name": "code",
+     "type": "string"
+    }
+   ],
+   "name": "ajouterStation",
+   "outputs": [],
+   "stateMutability": "nonpayable",
+   "type": "function"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    },
+    {
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    },
+    {
+     "internalType": "uint64",
+     "name": "instantMs",
+     "type": "uint64"
+    }
+   ],
+   "name": "enregistrerDepart",
+   "outputs": [],
+   "stateMutability": "nonpayable",
+   "type": "function"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    },
+    {
+     "internalType": "string",
+     "name": "station",
+     "type": "string"
+    },
+    {
+     "internalType": "uint64",
+     "name": "instantMs",
+     "type": "uint64"
+    }
+   ],
+   "name": "enregistrerRetour",
+   "outputs": [],
+   "stateMutability": "nonpayable",
+   "type": "function"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    }
+   ],
+   "name": "lirePlanche",
+   "outputs": [
+    {
+     "components": [
+      {
+       "internalType": "bool",
+       "name": "existe",
+       "type": "bool"
+      },
+      {
+       "internalType": "bool",
+       "name": "enMer",
+       "type": "bool"
+      },
+      {
+       "internalType": "uint32",
+       "name": "nombreDeparts",
+       "type": "uint32"
+      },
+      {
+       "internalType": "string",
+       "name": "stationOrigine",
+       "type": "string"
+      },
+      {
+       "internalType": "string",
+       "name": "derniereStation",
+       "type": "string"
+      }
+     ],
+     "internalType": "struct RegistreKorko.Planche",
+     "name": "",
+     "type": "tuple"
+    }
+   ],
+   "stateMutability": "view",
+   "type": "function"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "string",
+     "name": "code",
+     "type": "string"
+    }
+   ],
+   "name": "lireStation",
+   "outputs": [
+    {
+     "components": [
+      {
+       "internalType": "bool",
+       "name": "existe",
+       "type": "bool"
+      },
+      {
+       "internalType": "uint32",
+       "name": "nombrePlanches",
+       "type": "uint32"
+      }
+     ],
+     "internalType": "struct RegistreKorko.Station",
+     "name": "",
+     "type": "tuple"
+    }
+   ],
+   "stateMutability": "view",
+   "type": "function"
+  },
+  {
+   "inputs": [],
+   "name": "listerPlanches",
+   "outputs": [
+    {
+     "internalType": "uint16[]",
+     "name": "",
+     "type": "uint16[]"
+    }
+   ],
+   "stateMutability": "view",
+   "type": "function"
+  },
+  {
+   "inputs": [],
+   "name": "listerStations",
+   "outputs": [
+    {
+     "internalType": "string[]",
+     "name": "",
+     "type": "string[]"
+    }
+   ],
+   "stateMutability": "view",
+   "type": "function"
+  },
+  {
+   "inputs": [],
+   "name": "proprietaire",
+   "outputs": [
+    {
+     "internalType": "address",
+     "name": "",
+     "type": "address"
+    }
+   ],
+   "stateMutability": "view",
+   "type": "function"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "uint16",
+     "name": "numero",
+     "type": "uint16"
+    }
+   ],
+   "name": "retirerPlanche",
+   "outputs": [],
+   "stateMutability": "nonpayable",
+   "type": "function"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "string",
+     "name": "code",
+     "type": "string"
+    }
+   ],
+   "name": "retirerStation",
+   "outputs": [],
+   "stateMutability": "nonpayable",
+   "type": "function"
+  }
+ ]
+}

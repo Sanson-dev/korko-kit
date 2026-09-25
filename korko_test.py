@@ -33,6 +33,7 @@ import sys
 import time
 from collections import defaultdict
 
+# --- Réglages de validation d'une station KORKO ---
 PORT = 8420
 DUREE = 20          # secondes d'écoute par défaut
 CADENCE_MIN = 0.8   # paquets par seconde et par balise, en dessous c'est mauvais
@@ -72,6 +73,7 @@ def titre(texte):
 # --------------------------------------------------------------------------
 # Écoute du flux
 # --------------------------------------------------------------------------
+# On se connecte au flux de la station et on collecte ses observations.
 
 def ecouter(hote, duree):
     """Se connecte au flux et collecte les observations pendant `duree`."""
@@ -195,6 +197,7 @@ def analyser(obs, duree, station_attendue=None):
 # --------------------------------------------------------------------------
 # Mode mesure — pour calibrer à la main
 # --------------------------------------------------------------------------
+# Utile pour ajuster le RSSI réel d'une balise selon la distance et l'environnement.
 
 def mesurer(hote, balise):
     print("Mesure de %s. Déplacez-vous, la médiane suit. Ctrl-C pour arrêter.\n"
