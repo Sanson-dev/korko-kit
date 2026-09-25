@@ -8,11 +8,14 @@ import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from korko import STATIONS
+from paiement import caisse, horaires
+from smart_contract import chaine
+
 PORT, TARIF_MIN, PLAFOND = 9000, 0.20, 600
-PERDUE = 3 * PLAFOND
 STATIQUE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-PARC = {"korko-01": "A", "korko-02": "A", "korko-03": "B", "korko-04": "B",
-        "korko-05": "C", "korko-06": "C"}
+REGISTRE = chaine.connecter()
+PARC = chaine.lire_parc(REGISTRE, STATIONS)
 planches = {b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
             for b, s in PARC.items()}
 sessions, file_attente, reservations, client_sessions = {}, {}, {}, {}
@@ -24,11 +27,23 @@ def duree_txt(s):
     return "%d min" % (s // 60) if s < 3600 else "%d h %02d" % (s // 3600, s % 3600 // 60)
 
 def note(texte):
-    journal.insert(0, "[%7.1f] %s" % (horloge, texte))
-    print("  %s" % journal[0], flush=True)
+    ligne = "[%7.1f] %s" % (horloge, texte)
+    journal.insert(0, ligne)
+    print("  %s" % ligne, flush=True)
+
+PUBLIEUR = chaine.Publieur(REGISTRE, chaine.compte_du_cloud(), note)
+CAISSE = caisse.creer_caisse(note)
 
 def sms(client, texte):
     note("SMS → %s : %s" % (client, texte))
+
+def prevenir(session, texte):
+    """Message au client d'une session : dans son appli s'il en a une."""
+    experience = client_sessions.get(session.get("identifiant"))
+    if experience:
+        CAISSE.envoyer(experience, texte, horloge)
+    else:
+        sms(session["client"], texte)
 
 def suggestion(station):
     dispo = [b for b, p in planches.items()
@@ -36,20 +51,41 @@ def suggestion(station):
              and b not in sessions and b not in reservations]
     return min(dispo, key=lambda b: planches[b]["sorties"]) if dispo else None
 
-def armer(client, station, identifiant):
+def armer(client, moyen, station, identifiant):
     ancien = client_sessions.get(identifiant)
     if ancien and ancien["etat"] in ("armée", "en cours"):
         return ancien, None
+    if not horaires.locations_ouvertes(horloge):
+        return None, "Les locations ferment à 22 h. À demain !"
     balise = suggestion(station)
     if not balise:
         return None, "Plus de planche disponible à la station %s." % station
+    etat = {"station": station, "balise": balise, "etat": "armée",
+            "armee_a": horloge, "session_id": uuid.uuid4().hex}
+    try:
+        CAISSE.reserver(etat, client, moyen, horloge)
+    except caisse.REFUS as refus:
+        return None, str(refus)
     planches[balise]["statut"] = "réservée"
     reservations[balise] = identifiant
-    etat = {"client": client, "station": station, "balise": balise, "etat": "armée",
-            "armee_a": horloge, "session_id": uuid.uuid4().hex}
     client_sessions[identifiant] = etat
-    note("%s arme en station %s → %s" % (client, station, balise))
+    note("%s arme en station %s → %s" % (etat["client"], station, balise))
     return etat, None
+
+def annuler(identifiant):
+    """Le client renonce avant de partir : planche libérée, rien de débité."""
+    experience = client_sessions.get(identifiant)
+    if not experience or experience["etat"] != "armée":
+        return "Il n'y a pas de réservation à annuler."
+    balise = experience["balise"]
+    if reservations.get(balise) == identifiant:
+        del reservations[balise]
+        if planches[balise]["statut"] == "réservée":
+            planches[balise]["statut"] = "au râtelier"
+    experience["etat"] = "annulée"
+    CAISSE.annuler(experience, horloge)
+    note("%s annule sa réservation de %s" % (experience["client"], balise))
+    return None
 
 def cloturer(balise, station, t, hors_base):
     p = planches[balise]
@@ -63,12 +99,13 @@ def cloturer(balise, station, t, hors_base):
     s = sessions.pop(balise, None)
     if s:
         duree, montant = max(0, t - s["debut"]), max(0, t - s["debut"]) / 60 * TARIF_MIN
-        identifiant = s.get("identifiant")
-        if identifiant in client_sessions:
-            client_sessions[identifiant].update({"etat": "retournée", "retour_a": t, "duree": duree,
-                                                  "montant": montant, "retour_station": station})
-        if not s["client"].startswith("Départ ambigu"):
-            sms(s["client"], "Merci ! %s, %s, %.2f €. Caution libérée." % (balise, duree_txt(duree), montant))
+        experience = client_sessions.get(s.get("identifiant"))
+        if experience:
+            experience.update({"etat": "retournée", "retour_a": t, "duree": duree,
+                               "montant": montant, "retour_station": station})
+            CAISSE.terminer(experience, montant, t)
+        elif not s["client"].startswith("Départ ambigu"):
+            sms(s["client"], "Merci ! %s, %s, %.2f €." % (balise, duree_txt(duree), montant))
     if hors_base:
         note("RÉÉQUILIBRAGE : %s rendue en %s, sa base est %s" % (balise, station, p["origine"]))
 
@@ -114,13 +151,17 @@ def reparer(balise):
 def retards():
     for balise, s in list(sessions.items()):
         duree = horloge - s["debut"]
-        if duree > PERDUE:
-            sms(s["client"], "%s jamais rendue. Caution débitée : elle est à toi." % balise)
+        if horloge >= s["limite"]:
             planches[balise]["statut"] = "perdue"
             del sessions[balise]
+            note("ALERTE : %s pas rendue avant 23 h" % balise)
+            experience = client_sessions.get(s.get("identifiant"))
+            if experience:
+                experience["etat"] = "caution débitée"
+                CAISSE.saisir_caution(experience, horloge)
         elif duree > PLAFOND and not s["rappel"]:
             s["rappel"] = True
-            sms(s["client"], "Ta session tourne depuis %s. Raccroche %s en sortant." % (duree_txt(duree), balise))
+            prevenir(s, "Ta session tourne depuis %s. Raccroche %s en sortant." % (duree_txt(duree), balise))
 
 def traiter(ev):
     global horloge
@@ -132,6 +173,8 @@ def traiter(ev):
         retards(); return
     balise = ev.get("balise")
     if balise not in planches: return note("balise inconnue : %s" % balise)
+    if type_ in ("DEPART", "RETOUR", "ETRANGERE"):
+        PUBLIEUR.publier(ev)
     if type_ == "DEPART":
         p = planches[balise]
         if p["statut"] == "maintenance":
@@ -182,7 +225,8 @@ def traiter(ev):
             return note("ALERTE : départ de %s ignoré, planche indisponible ou réservée" % balise)
 
         p["statut"], p["ou"], p["sorties"] = "en mer", None, p["sorties"] + 1
-        sessions[balise] = {"client": client, "debut": ev["t"], "rappel": False, "identifiant": identifiant}
+        sessions[balise] = {"client": client, "debut": ev["t"], "rappel": False, "identifiant": identifiant,
+                            "limite": horaires.limite_retour(ev["t"])}
         note("DÉPART %s depuis %s — %s" % (balise, station, client))
     elif type_ in ("RETOUR", "ETRANGERE"):
         note("%s %s en %s" % (type_, balise, station))
@@ -190,8 +234,12 @@ def traiter(ev):
 
 def client_json(identifiant):
     e = client_sessions.get(identifiant)
-    if not e: return {"etat": "inconnue", "t": horloge}
-    r = dict(e); r["t"] = horloge
+    if not e: return {"etat": "inconnue", "t": horloge, "heure": horaires.texte_heure(horloge)}
+    r = {cle: valeur for cle, valeur in e.items() if cle not in ("autorisation", "identite")}
+    r.update(CAISSE.resume(e))
+    r["t"], r["heure"] = horloge, horaires.texte_heure(horloge)
+    if r["etat"] == "caution débitée":
+        r["montant"] = r["debite"]
     if r["etat"] == "en cours":
         r["duree"] = max(0, horloge - r["depart_a"])
         r["montant"] = r["duree"] / 60 * TARIF_MIN
@@ -242,9 +290,16 @@ class Cloud(BaseHTTPRequestHandler):
             return self.json({"erreur": erreur} if erreur else {"statut": statut}, 409 if erreur else 200)
         if u.path == "/api/arme":
             d = self.lire_json()
-            if not d or not d.get("client") or not d.get("identifiant"): return self.json({"erreur": "Numéro ou session manquant."}, 400)
-            client = str(d["client"]).strip(); client = client if client.startswith("+") else "+" + client
-            etat, erreur = armer(client, str(d.get("station", "A")), str(d["identifiant"]))
+            if (not d or not d.get("identifiant") or not isinstance(d.get("client"), dict)
+                    or not isinstance(d.get("moyen"), dict)):
+                return self.json({"erreur": "Identité ou moyen de paiement manquant."}, 400)
+            etat, erreur = armer(d["client"], d["moyen"], str(d.get("station", "A")), str(d["identifiant"]))
+            return self.json({"erreur": erreur} if erreur else client_json(str(d["identifiant"])), 409 if erreur else 200)
+        if u.path == "/api/annuler":
+            d = self.lire_json()
+            if not d or not d.get("identifiant"):
+                return self.json({"erreur": "Session manquante."}, 400)
+            erreur = annuler(str(d["identifiant"]))
             return self.json({"erreur": erreur} if erreur else client_json(str(d["identifiant"])), 409 if erreur else 200)
         if u.path == "/evenements":
             brut = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8")
@@ -255,7 +310,9 @@ class Cloud(BaseHTTPRequestHandler):
         self.repondre("Introuvable", code=404)
     def do_GET(self):
         u, q = urlparse(self.path), parse_qs(urlparse(self.path).query)
-        if u.path in ("/parc", "/api/parc"): return self.json({"t": horloge, "planches": planches, "sessions": sessions})
+        if u.path in ("/parc", "/api/parc"):
+            return self.json({"t": horloge, "heure": horaires.texte_heure(horloge),
+                              "ouvert": horaires.locations_ouvertes(horloge), "planches": planches})
         if u.path == "/api/client": return self.json(client_json(q.get("identifiant", [""])[0]))
         if u.path == "/arme":
             client = q.get("client", ["+33600000000"])[0].strip(); client = client if client.startswith("+") else "+" + client
@@ -284,7 +341,8 @@ class Cloud(BaseHTTPRequestHandler):
                 action = (" <button type='button' onclick=\"reparer('%s')\">Réparée — remettre en service</button>" % html.escape(b, quote=True)
                           if p["statut"] == "maintenance" and not p.get("reparation_demandee") else "")
                 items.append("<li><strong>%s</strong> — %s%s%s</li>" % (html.escape(b), html.escape(status), detail, action))
-            page = "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=2><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · t = %.0f s</h2><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>RAPPORTS DE CONDITION</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}</style><script>async function reparer(b){const r=await fetch('/api/reparer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}</script></body>" % (horloge, "".join(items), rapports, tableau())
+            fiches = "".join("<li>%s</li>" % html.escape(ligne) for ligne in CAISSE.fiches()) or "<li>Aucun client</li>"
+            page = "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=2><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · %s · t = %.0f s</h2><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>FICHES CLIENTS</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>RAPPORTS DE CONDITION</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}</style><script>async function reparer(b){const r=await fetch('/api/reparer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}</script></body>" % (horaires.texte_heure(horloge), horloge, "".join(items), fiches, rapports, html.escape(tableau()))
             return self.repondre(page, "text/html; charset=utf-8")
         if u.path in ("/", "/index.html"): return self.servir("index.html", "text/html; charset=utf-8")
         if u.path in ("/static/style.css", "/static/app.js"): return self.servir(os.path.basename(u.path), "text/css; charset=utf-8" if u.path.endswith("css") else "application/javascript; charset=utf-8")
@@ -296,7 +354,9 @@ class Cloud(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
 
 if __name__ == "__main__":
+    PUBLIEUR.start()
     print("Cloud KORKO sur http://0.0.0.0:%d" % PORT)
+    print("  registre : %s" % chaine.lien_adresse(REGISTRE.address))
     print("  expérience client : /     administration : /admin     parc brut : /parc")
     print("  stations : POST /evenements\n")
     HTTPServer(("0.0.0.0", PORT), Cloud).serve_forever()
