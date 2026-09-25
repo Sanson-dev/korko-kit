@@ -311,20 +311,19 @@ class TestSequestre(unittest.TestCase):
         self.assertEqual(suivante.etat, "bloquée")
 
     def test_un_cloud_a_sec_n_arrete_pas_la_file(self):
-        garnie = nouvelle_autorisation()
-        riche = self.portefeuille(Web3.to_wei(1, "ether"))
-        self.sequestre.executer_blocage(garnie, riche["cle"])
         self.vider_korko(CAUTION - 1)
-        nouvelle = nouvelle_autorisation()
-        self.sequestre.bloquer(nouvelle, self.portefeuille()["cle"])
-        self.sequestre.debiter(garnie, 300.0)
+        nouveau_client = nouvelle_autorisation()
+        client_garni = nouvelle_autorisation()
+        garni = self.portefeuille(Web3.to_wei(1, "ether"))
+        self.sequestre.bloquer(nouveau_client, self.portefeuille()["cle"])
+        self.sequestre.bloquer(client_garni, garni["cle"])
         self.traiter_la_file()
-        self.assertEqual(nouvelle.etat, "échec")
-        self.assertEqual(self.journal[1], "CRYPTO échec du blocage %s : "
+        self.assertEqual(nouveau_client.etat, "échec")
+        self.assertEqual(self.journal[0], "CRYPTO échec du blocage %s : "
                          "fonds insuffisants sur %s"
-                         % (crypto.abreger(nouvelle.reference),
+                         % (crypto.abreger(nouveau_client.reference),
                             crypto.abreger(self.korko.address)))
-        self.assertEqual(garnie.etat, "débitée")
+        self.assertEqual(client_garni.etat, "bloquée")
 
     @mock.patch.object(crypto, "GAZ_BLOQUER", 30_000)  # trop peu de gaz
     def test_une_transaction_annulee_laisse_sa_preuve(self):

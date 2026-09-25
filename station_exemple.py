@@ -14,18 +14,25 @@ Copiez-le en ma_station.py, et attaquez.
 """
 
 import json
+import hashlib
 import os
 import sys
+import tempfile
 import urllib.request
 
 from korko import Detecteur, lancer, planches_de
 
+# --- Paramétrage de la station et des fichiers de persistance ---
 CLOUD = os.environ.get("KORKO_CLOUD", "http://localhost:9000/evenements")
+JOURNAL_PATH = os.environ.get("KORKO_JOURNAL", os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "station_journal.ndjson"))
+MAX_REPLAY_PER_ATTEMPT = 20
 
 SEUIL = -80        # dBm : plus faible que ça, on ne compte pas la planche
 SILENCE = 10       # secondes sans paquet audible = la planche est partie
 
 
+# --- État local et logique de détection ---
 class Station(Detecteur):
 
     PERIODE_TIC = 1.0          # tic() toutes les secondes de flux
@@ -33,10 +40,54 @@ class Station(Detecteur):
     def __init__(self):
         self.vues = {}         # balise -> t du dernier paquet au-dessus du seuil
         self.station = "A"
-        self.journal = []      # événements que le cloud n'a pas encore reçus
+        self.journal = self.charger_journal()
         self.cloud_ok = None   # pour ne signaler que les changements
         self.demarre = False
         print("station_exemple : décisions envoyées à %s" % CLOUD, file=sys.stderr)
+
+    def charger_journal(self):
+        """Restaure les événements non acquittés; ignore une dernière ligne tronquée."""
+        events = []
+        try:
+            with open(JOURNAL_PATH, encoding="utf-8") as f:
+                for ligne in f:
+                    try:
+                        ev = json.loads(ligne)
+                        if ev.get("evenement") in ("DEPART", "RETOUR", "ETRANGERE"):
+                            ev.setdefault("event_id", self.event_id(ev))
+                            events.append(ev)
+                    except (ValueError, AttributeError):
+                        continue
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            print("station_exemple : journal illisible (%s)" % e, file=sys.stderr)
+        return events
+
+    @staticmethod
+    def event_id(ev):
+        champs = [str(ev.get(k, "")) for k in ("station", "evenement", "balise", "t")]
+        return hashlib.sha256("\0".join(champs).encode("utf-8")).hexdigest()
+
+    def sauver_journal(self):
+        """Réécrit atomiquement: un crash laisse soit l'ancien, soit le nouveau journal."""
+        dossier = os.path.dirname(os.path.abspath(JOURNAL_PATH))
+        nom_temp = None
+        try:
+            fd, nom_temp = tempfile.mkstemp(prefix=".station-journal-", dir=dossier, text=True)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                for ev in self.journal:
+                    f.write(json.dumps(ev, ensure_ascii=False, separators=(",", ":")) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(nom_temp, JOURNAL_PATH)
+            return True
+        except OSError as e:
+            if nom_temp:
+                try: os.unlink(nom_temp)
+                except OSError: pass
+            print("station_exemple : impossible de sauvegarder le journal (%s)" % e, file=sys.stderr)
+            return False
 
     # -- un paquet radio arrive -------------------------------------------
     def observation(self, o):
@@ -58,33 +109,41 @@ class Station(Detecteur):
             if t - vue > SILENCE:                # silence prolongé : elle est partie
                 del self.vues[balise]
                 self.signaler("DEPART", balise, t)
-        if self.vider():                         # cloud à jour : il peut avancer
+        self.vider()
+        if not self.journal:                     # les TIC ne gonflent pas le journal
             self.envoyer({"t": t, "station": self.station, "evenement": "TIC"})
 
     # -- sortie -----------------------------------------------------------
     def signaler(self, type_, balise, t):
         {"DEPART": self.depart, "RETOUR": self.retour,
          "ETRANGERE": self.etrangere}[type_](balise, t, self.station)
-        self.journal.append({"t": t, "station": self.station,
-                             "balise": balise, "evenement": type_})
+        ev = {"t": t, "station": self.station, "balise": balise, "evenement": type_}
+        ev["event_id"] = self.event_id(ev)
+        self.journal.append(ev)
+        self.sauver_journal()
         self.vider()
 
     # -- si le réseau devenait inaccessible : rien ne se perd -------------
     def vider(self):
         """Envoie le journal dans l'ordre ; s'arrête au premier échec d'envoi."""
-        while self.journal:
+        for _ in range(min(len(self.journal), MAX_REPLAY_PER_ATTEMPT)):
             if not self.envoyer(self.journal[0]):
-                return False                     # on réessaiera au prochain tic
-            self.journal.pop(0)
+                return False
+            acquitte = self.journal.pop(0)
+            if not self.sauver_journal():
+                # Garder en mémoire et rejouer est préférable à perdre l'événement.
+                self.journal.insert(0, acquitte)
+                return False
         return True
 
     def envoyer(self, evenement):
         try:
-            urllib.request.urlopen(
+            with urllib.request.urlopen(
                 urllib.request.Request(
                     CLOUD, json.dumps(evenement).encode("utf-8"),
-                    {"Content-Type": "application/json"}), timeout=0.5)
-            ok = True
+                    {"Content-Type": "application/json"}), timeout=0.5) as response:
+                ok = 200 <= response.status < 300
+                response.read()
         except Exception:
             ok = False
         if ok != self.cloud_ok:                  # on ne prévient qu'au changement

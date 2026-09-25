@@ -79,6 +79,13 @@ def demarrer(journaliser):
     return sequestre
 
 
+def confirmer_seul(envoi):
+    """Confirme l'envoi sans que le registre signe en même temps : les deux
+    fils partagent le compte du cloud, donc ses nonces."""
+    with chaine.VERROU_CLOUD:
+        return envoi.confirmer()
+
+
 class Envoi:
     """Une transaction signée, renvoyée à l'identique à chaque essai.
 
@@ -258,7 +265,8 @@ class Sequestre(threading.Thread):
 
     def transmettre(self, compte, transaction):
         """Envoie la transaction, signée une seule fois ; retourne son hash."""
-        return self.insister(Envoi(self.w3, compte, transaction).confirmer)
+        return self.insister(confirmer_seul, Envoi(self.w3, compte,
+                                                   transaction))
 
     def insister(self, action, *arguments):
         """Retourne le résultat de l'action, réessayée sur une des ATTENTES."""

@@ -33,6 +33,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # --------------------------------------------------------------------------
 # Calibration — à ajuster après mesure terrain
 # --------------------------------------------------------------------------
+# Ces valeurs modélisent la propagation radio de la station et servent à
+# générer des observations réalistes pour les tests et démos.
 
 RSSI_1M = -62.0        # puissance reçue à 1 m, balise à -19,5 dBm
 EXPOSANT = 2.6         # exposant de propagation (2 = espace libre)
@@ -68,6 +70,7 @@ ORIGINES = {"korko-03": "B", "korko-04": "B",
 # --------------------------------------------------------------------------
 # Le modèle physique
 # --------------------------------------------------------------------------
+# Un objet Balise décrit un point de l'espace et sa manière de générer un RSSI.
 
 class Balise:
     def __init__(self, ident, x=RACK[0], y=RACK[1], origine="A"):
@@ -132,6 +135,7 @@ class Balise:
 # --------------------------------------------------------------------------
 # Le simulateur
 # --------------------------------------------------------------------------
+# Le simulateur pilote des balises et produit un flux de mesures sur la station A.
 
 class Simulateur:
 
