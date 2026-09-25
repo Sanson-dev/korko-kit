@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Cloud KORKO : stations compatibles, expérience client et tableau admin."""
+"""Cloud KORKO : stations compatibles, expérience client et tableau admin.
+
+Mode hors ligne et persistance SQLite (branche de Sanson), registre des
+planches sur Avalanche (smart_contract/) et paiement avec caution
+(paiement/).
+"""
 import json
 import html
 import hashlib
@@ -10,18 +15,20 @@ import uuid
 import sqlite3
 import hmac
 import base64
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+from korko import STATIONS
+from paiement import caisse, horaires, prestataire
+from smart_contract import chaine
 
 # --- Paramètres de service et état global du cloud ---
 PORT, TARIF_MIN = 9000, 0.20
-RESERVATION_TIMEOUT = 120
-FIRST_REMINDER = 60 * 60
-SECOND_REMINDER = 120 * 60
-PRESUMED_LOST = 180 * 60
 STATIQUE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-PARC = {"korko-01": "A", "korko-02": "A", "korko-03": "B", "korko-04": "B",
-        "korko-05": "C", "korko-06": "C"}
+REGISTRE = chaine.connecter()
+PARC = chaine.lire_parc(REGISTRE, STATIONS)
 
 # État mémoire du système : planches, sessions actives, réservations, clients et journal.
 planches = {b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
@@ -33,8 +40,17 @@ rebalancements_actifs, historique_etrangeres = {}, []
 dernier_contact = {}
 evenements_recus = set()
 demo_generation = 0
+# Une connexion par fil (une connexion muette ne bloque plus les autres),
+# mais un seul traitement à la fois : l'état ci-dessus est partagé.
+VERROU = threading.Lock()
 DB_PATH = os.environ.get("KORKO_CLOUD_DB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "korko_cloud.sqlite3"))
 OFFLINE_SECRET = os.environ.get("KORKO_OFFLINE_SECRET", "korko-hackathon-offline-secret")
+
+#: ce que l'appli affiche d'une location sans caution (réservation hors ligne
+#: d'un client dont le moyen de paiement n'a pas pu être retrouvé)
+SANS_PAIEMENT = {"paiement": {"type": "aucun", "libelle": "aucun moyen enregistré"},
+                 "caution": {"montant": prestataire.CAUTION, "etat": "échec", "liens": []},
+                 "debite": None}
 
 def autorisation_hors_ligne(identifiant, station):
     payload = json.dumps({"authorization_id": identifiant, "station_id": station,
@@ -48,28 +64,39 @@ def sauvegarder():
     # On sérialise les structures principales pour éviter de perdre l'état entre redémarrages.
     data = {k: globals()[k] for k in ("planches", "sessions", "file_attente", "reservations", "client_sessions", "rapports_planches", "journal", "signes", "horloge", "demo_generation", "rebalancements_actifs", "historique_etrangeres")}
     data["evenements_recus"] = list(evenements_recus)
+    # default=vars : les autorisations de paiement sont enregistrées comme des dictionnaires.
+    texte = json.dumps(data, ensure_ascii=False, default=vars)
     with sqlite3.connect(DB_PATH, timeout=10) as db:
         db.execute("CREATE TABLE IF NOT EXISTS etat (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)")
-        db.execute("INSERT INTO etat(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (json.dumps(data, ensure_ascii=False),))
+        db.execute("INSERT INTO etat(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (texte,))
 
 def charger():
     # Charge l'état précédent au démarrage. Si aucun fichier n'existe, on repart sur l'état par défaut.
     global horloge, demo_generation, evenements_recus
     if not os.path.exists(DB_PATH): return
     try:
-        with sqlite3.connect(DB_PATH) as db: row = db.execute("SELECT data FROM etat WHERE id=1").fetchone()
+        with sqlite3.connect(DB_PATH) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS etat (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)")
+            row = db.execute("SELECT data FROM etat WHERE id=1").fetchone()
         if not row: return
         data = json.loads(row[0])
         for key in ("planches", "sessions", "file_attente", "reservations", "client_sessions", "rapports_planches", "journal", "signes", "rebalancements_actifs", "historique_etrangeres"):
             globals()[key] = data.get(key, globals()[key])
         horloge = data.get("horloge", 0.0); demo_generation = data.get("demo_generation", 0)
         evenements_recus = set(data.get("evenements_recus", []))
+        for experience in client_sessions.values():
+            if isinstance(experience.get("autorisation"), dict):
+                experience["autorisation"] = prestataire.Autorisation.depuis(experience["autorisation"])
     except (sqlite3.Error, ValueError) as exc:
         raise RuntimeError("Impossible de charger l'état cloud %s: %s" % (DB_PATH, exc))
 
 def reinitialiser_demo():
     """Efface l'état temporaire du cloud et restaure le parc prototype."""
     global horloge, demo_generation
+    for experience in client_sessions.values():
+        # une caution encore bloquée est libérée (en crypto, rendue au client)
+        if experience.get("etat") in ("armée", "en cours") and "autorisation" in experience:
+            CAISSE.prestataire.debiter(experience["autorisation"], 0.0)
     demo_generation += 1
     sessions.clear()
     file_attente.clear()
@@ -93,8 +120,12 @@ def duree_txt(s):
     return "%d min" % (s // 60) if s < 3600 else "%d h %02d" % (s // 3600, s % 3600 // 60)
 
 def note(texte):
-    journal.insert(0, "[%7.1f] %s" % (horloge, texte))
-    print("  %s" % journal[0], flush=True)
+    ligne = "[%7.1f] %s" % (horloge, texte)
+    journal.insert(0, ligne)
+    print("  %s" % ligne, flush=True)
+
+PUBLIEUR = chaine.creer_publieur(REGISTRE, note)
+CAISSE = caisse.creer_caisse(note)
 
 def sms(client, texte):
     note("SMS → %s : %s" % (client, texte))
@@ -105,21 +136,51 @@ def suggestion(station):
              and b not in sessions and b not in reservations]
     return min(dispo, key=lambda b: planches[b]["sorties"]) if dispo else None
 
-def armer(client, station, identifiant):
+def armer(client, moyen, station, identifiant):
     ancien = client_sessions.get(identifiant)
     if ancien and ancien["etat"] in ("armée", "en cours"):
         return ancien, None
+    if not horaires.locations_ouvertes(horloge):
+        return None, "Les locations ferment à 22 h. À demain !"
     balise = suggestion(station)
     if not balise:
         return None, "Plus de planche disponible à la station %s." % station
+    etat = {"station": station, "balise": balise, "etat": "armée",
+            "armee_a": horloge, "reservation_t": horloge,
+            "reservation_status": "Réservée", "session_id": uuid.uuid4().hex}
+    try:
+        client = dict(client, appareil=identifiant)
+        CAISSE.reserver(etat, client, moyen, horloge)
+    except caisse.REFUS as refus:
+        return None, str(refus)
     planches[balise]["statut"] = "réservée"
     reservations[balise] = identifiant
-    etat = {"client": client, "station": station, "balise": balise, "etat": "armée",
-            "armee_a": horloge, "reservation_t": horloge, "reservation_status": "Réservée",
-            "session_id": uuid.uuid4().hex}
     client_sessions[identifiant] = etat
-    note("%s arme en station %s → %s" % (client, station, balise))
+    note("%s arme en station %s → %s" % (etat["client"], station, balise))
     return etat, None
+
+def annuler(identifiant, expiree=False):
+    """Le client renonce avant de partir, ou n'a pas pris la planche dans
+    les 10 minutes : planche libérée, rien de débité.
+    Retourne None, ou la phrase d'erreur à afficher."""
+    experience = client_sessions.get(identifiant)
+    if not experience or experience["etat"] != "armée":
+        return "Il n'y a pas de réservation à annuler."
+    if experience.get("offline") and not expiree:
+        # la station, qui l'a donnée hors ligne, n'apprendrait pas l'annulation
+        return "Cette réservation a été faite à la station : elle ne s'annule pas."
+    balise = experience["balise"]
+    if reservations.get(balise) == identifiant:
+        del reservations[balise]
+        if planches[balise]["statut"] == "réservée":
+            planches[balise]["statut"] = "au râtelier"
+    experience["etat"] = "annulée"
+    experience["reservation_status"] = "Expirée" if expiree else "Annulée"
+    if "autorisation" in experience:
+        (CAISSE.expirer if expiree else CAISSE.annuler)(experience, horloge)
+    note("%s : réservation de %s %s" % (experience["client"], balise,
+                                        "expirée" if expiree else "annulée"))
+    return None
 
 def cloturer(balise, station, t, hors_base):
     p = planches[balise]
@@ -164,22 +225,23 @@ def cloturer(balise, station, t, hors_base):
 
     duree, montant = max(0, t - s["debut"]), max(0, t - s["debut"]) / 60 * TARIF_MIN
     identifiant = s.get("identifiant")
-    if identifiant in client_sessions:
-        experience = client_sessions[identifiant]
+    experience = client_sessions.get(identifiant)
+    if experience:
         if experience.get("etat") in ("retournée", "retour_tardif", "terminée"):
             return note("RETOUR DUPLIQUÉ : %s déjà clôturée pour %s" % (balise, identifiant))
         experience.update({"etat": "retournée", "retour_a": t, "duree": duree,
                            "montant": montant, "retour_station": station,
-                           "reservation_status": "Terminée",
-                           "alerte": None, "alerte_a": None})
+                           "reservation_status": "Terminée"})
         # A reservation can be reassigned to the board actually taken.
         # Clear every mapping for this customer when the rental closes.
         for reservee, proprietaire in list(reservations.items()):
             if proprietaire == identifiant:
                 reservations.pop(reservee, None)
     sessions.pop(balise, None)
-    if not s["client"].startswith("Départ ambigu"):
-        sms(s["client"], "Merci ! %s, %s, %.2f €. Caution libérée." % (balise, duree_txt(duree), montant))
+    if experience and "autorisation" in experience:
+        CAISSE.terminer(experience, montant, t)
+    elif not s["client"].startswith("Départ ambigu"):
+        sms(s["client"], "Merci ! %s, %s, %.2f €." % (balise, duree_txt(duree), montant))
     if hors_base:
         note("RÉÉQUILIBRAGE : %s rendue en %s, sa base est %s" % (balise, station, p["origine"]))
 
@@ -229,6 +291,8 @@ def enregistrer_rapport(identifiant, session_id, condition, photo=None):
     elif condition == "OK":
         planche.pop("inspection", None)
     else:
+        if rapport["balise"] in reservations:
+            annuler(reservations[rapport["balise"]])
         planche["statut"] = "maintenance"
         planche.pop("inspection", None)
     experience["rapport_condition"] = condition
@@ -248,78 +312,81 @@ def reparer(balise):
     note("RÉPARATION TERMINÉE : %s en attente de son râtelier %s" % (balise, planche["origine"]))
     return "Réparation terminée — en attente du retour au râtelier", None
 
-def retards():
-    for balise, s in list(sessions.items()):
-        duree = horloge - s["debut"]
-        identifiant = s.get("identifiant")
-        alerts_sent = s.setdefault("alerts_sent", {"60min": False, "120min": False, "lost": False})
-        if identifiant and identifiant in client_sessions:
-            client_sessions[identifiant].setdefault("alerte", None)
-
-        # When several thresholds were crossed while the cloud was offline,
-        # emit only the highest current alert and mark earlier thresholds done.
-        if duree >= PRESUMED_LOST and not alerts_sent["lost"]:
-            alerts_sent.update({"60min": True, "120min": True, "lost": True})
-            planches[balise]["statut"] = "retard"
-            note("ALERTE RETARD IMPORTANT %s — PRÉSUMÉE NON RENDUE / RETARD IMPORTANT" % balise)
-            sms(s["client"], "KORKO : votre planche n’a pas été rendue après 3 h. Merci de la ramener au râtelier.")
-            continue
-        if duree >= SECOND_REMINDER and not alerts_sent["120min"]:
-            alerts_sent.update({"60min": True, "120min": True})
-            note("RAPPEL 2H %s" % balise)
-            sms(s["client"], "KORKO : votre session dépasse 2 h. Pensez à ramener la planche lorsque vous avez terminé.")
-            continue
-        if duree >= FIRST_REMINDER and not alerts_sent["60min"]:
-            alerts_sent["60min"] = True
-            note("RAPPEL 1H %s" % balise)
-
-def expirations_reservations():
+def expirer_reservations():
+    """Une planche réservée mais pas prise à temps (10 min) est libérée."""
     for identifiant, e in list(client_sessions.items()):
-        if (e.get("etat") != "armée" or e.get("reservation_status") != "Réservée"
-                or horloge - e.get("reservation_t", horloge) < RESERVATION_TIMEOUT):
-            continue
-        balise = e["balise"]
-        if reservations.get(balise) != identifiant:
-            continue
-        reservations.pop(balise)
-        p = planches[balise]
-        if p["statut"] == "réservée" and balise not in sessions:
-            p["statut"] = "au râtelier"
-        e.update({"etat": "expirée", "reservation_status": "Expirée", "expiree_a": horloge})
-        note("Réservation %s expirée après %d s" % (balise, RESERVATION_TIMEOUT))
+        limite = e["armee_a"] + horaires.DELAI_RESERVATION
+        if e["etat"] == "armée" and horloge >= limite:
+            annuler(identifiant, expiree=True)
+
+def retards():
+    """Réservations expirées, et planches pas rendues avant 23 h."""
+    expirer_reservations()
+    for balise, s in list(sessions.items()):
+        if horloge >= s["limite"]:
+            planches[balise]["statut"] = "perdue"
+            del sessions[balise]
+            note("ALERTE : %s pas rendue avant 23 h" % balise)
+            experience = client_sessions.get(s.get("identifiant"))
+            if experience:
+                experience["etat"] = "caution débitée"
+                if "autorisation" in experience:
+                    CAISSE.saisir_caution(experience, horloge)
+
+def reserver_hors_ligne(ev, station):
+    """Rejoue une réservation faite à la station pendant une coupure du cloud.
+
+    La caution est bloquée maintenant, sur le moyen de paiement enregistré
+    du téléphone qui a réservé (le jeton hors ligne ne s'obtient qu'après
+    une location en ligne réussie)."""
+    identifiant = str(ev.get("authorization_id", ""))
+    balise = ev.get("balise")
+    if not identifiant or balise not in planches:
+        return note("réservation hors ligne invalide")
+    ancien = client_sessions.get(identifiant)
+    if ancien and ancien.get("etat") in ("armée", "en cours"):
+        return
+    etat = {"station": station, "balise": balise, "etat": "armée",
+            "armee_a": ev["t"], "reservation_t": ev["t"],
+            "reservation_status": "Réservée", "offline": True,
+            "session_id": ev.get("offline_reservation_id", uuid.uuid4().hex)}
+    fiche = CAISSE.fichier.par_appareil(identifiant)
+    identite = {cle: fiche[cle] for cle in ("prenom", "nom", "telephone")} if fiche else {}
+    try:
+        CAISSE.reserver(etat, dict(identite, appareil=identifiant),
+                        {"type": "enregistre"}, ev["t"])
+    except caisse.REFUS as refus:
+        etat["client"] = "Client autorisé hors ligne"
+        note("RÉSERVATION HORS LIGNE sans caution : %s" % refus)
+    client_sessions[identifiant] = etat
+    reservations[balise] = identifiant
+    planches[balise]["statut"] = "réservée"
+    note("RÉSERVATION HORS LIGNE %s → %s" % (etat["client"], balise))
 
 # --- Traitement centralisé des événements reçus par les stations ---
 def traiter(ev):
     global horloge
-    horloge = max(horloge, ev.get("t", horloge))
-    type_, station = ev.get("evenement"), ev.get("station")
+    t, type_, station = ev.get("t"), ev.get("evenement"), ev.get("station")
+    if not isinstance(t, (int, float)) or not 0 <= t < 4e9:
+        return note("événement sans heure valide ignoré : %r" % (ev,))
+    if t < signes.get(station, t) - 60:
+        horloge = t  # simulateur relancé : son horloge repart de 9 h
+    horloge = max(horloge, t)
     if station not in signes: note("station %s branchée" % station)
-    signes[station] = ev.get("t", horloge)
+    signes[station] = t
     dernier_contact[station] = time.monotonic()
-    expirations_reservations()
 
-    # Les TIC servent à faire avancer les délais, rappels et pertes de planches.
+    # Les TIC font avancer les délais : réservations expirées, 23 h.
     if type_ == "TIC":
         retards(); return
 
     # Une réservation hors ligne est validée sans accès réseau, on la réplique dans l'état du cloud.
     if type_ == "OFFLINE_RESERVATION":
-        identifiant = str(ev.get("authorization_id", ""))
-        balise = ev.get("balise")
-        if not identifiant or balise not in planches:
-            return note("réservation hors ligne invalide")
-        if identifiant not in client_sessions or client_sessions[identifiant].get("etat") in ("retournée", "expirée"):
-            client_sessions[identifiant] = {"client": "Client autorisé hors ligne", "station": station,
-                "balise": balise, "etat": "armée", "armee_a": ev["t"],
-                "reservation_t": ev["t"], "reservation_status": "Réservée",
-                "session_id": ev.get("offline_reservation_id", uuid.uuid4().hex),
-                "offline": True}
-            reservations[balise] = identifiant
-            planches[balise]["statut"] = "réservée"
-            note("RÉSERVATION HORS LIGNE %s → %s" % (identifiant, balise))
-        return
+        return reserver_hors_ligne(ev, station)
     balise = ev.get("balise")
     if balise not in planches: return note("balise inconnue : %s" % balise)
+    if type_ in ("DEPART", "RETOUR", "ETRANGERE"):
+        PUBLIEUR.publier(ev)
     if type_ == "DEPART":
         p = planches[balise]
         if p["statut"] == "maintenance":
@@ -370,39 +437,42 @@ def traiter(ev):
             return note("ALERTE : départ de %s ignoré, planche indisponible ou réservée" % balise)
 
         p["statut"], p["ou"], p["sorties"] = "en mer", None, p["sorties"] + 1
-        sessions[balise] = {"client": client, "debut": ev["t"],
-                    "alerts_sent": {"60min": False, "120min": False, "lost": False},
-                    "identifiant": identifiant}
+        sessions[balise] = {"client": client, "debut": ev["t"], "identifiant": identifiant,
+                            "limite": horaires.limite_retour(ev["t"])}
         note("DÉPART %s depuis %s — %s" % (balise, station, client))
+        if experience and "autorisation" in experience:
+            CAISSE.partir(experience, ev["t"])
     elif type_ == "RETOUR":
         note("RETOUR %s en %s" % (balise, station))
         cloturer(balise, station, ev["t"], False)
     elif type_ == "ETRANGERE":
+        # Rendue dans une autre station : la location se termine ici,
+        # et la planche est signalée à rééquilibrer.
+        note("ETRANGERE %s en %s" % (balise, station))
+        if balise in sessions:
+            cloturer(balise, station, ev["t"], False)
         event_id = ev.get("event_id") or hashlib.sha256("\0".join(str(ev.get(k, "")) for k in ("station", "evenement", "balise", "t")).encode("utf-8")).hexdigest()
         signaler_etrangere(balise, station, ev["t"], event_id)
 
 def client_json(identifiant):
     e = client_sessions.get(identifiant)
-    if not e: return {"etat": "inconnue", "t": horloge, "generation": demo_generation}
-    r = dict(e); r["t"] = horloge; r["generation"] = demo_generation
-    if r["etat"] in ("en cours", "retard", "perdue"):
+    commun = {"t": horloge, "heure": horaires.texte_heure(horloge),
+              "generation": demo_generation}
+    if not e:
+        return dict(commun, etat="inconnue")
+    r = {cle: valeur for cle, valeur in e.items()
+         if cle not in ("autorisation", "identite")}
+    r.update(CAISSE.resume(e) if "autorisation" in e
+             else dict(SANS_PAIEMENT, messages=e.get("messages", [])))
+    r.update(commun)
+    if r["etat"] == "caution débitée":
+        r["montant"] = r["debite"]
+    if r["etat"] == "en cours":
         r["duree"] = max(0, horloge - r["depart_a"])
         r["montant"] = r["duree"] / 60 * TARIF_MIN
-        if r["duree"] >= PRESUMED_LOST:
-            r["alerte"] = {"niveau": "critical", "titre": "Retard important",
-                            "message": "Votre planche n’a pas encore été détectée au râtelier. Merci de la ramener dès que possible."}
-        elif r["duree"] >= SECOND_REMINDER:
-            r["alerte"] = {"niveau": "warning", "titre": "Retour attendu",
-                            "message": "Votre session dépasse 2 heures. Merci de ramener la planche dès que possible."}
-        elif r["duree"] >= FIRST_REMINDER:
-            r["alerte"] = {"niveau": "info", "titre": "Session longue",
-                            "message": "Vous surfez depuis plus d’une heure. Aucun problème, pensez simplement à ramener la planche lorsque vous avez terminé."}
-        else:
-            r["alerte"] = None
-    else:
-        r["alerte"] = None
-    if r.get("reservation_status") == "Réservée":
-        r["reservation_restante"] = max(0, RESERVATION_TIMEOUT - (horloge - r.get("reservation_t", horloge)))
+    if r["etat"] == "armée":
+        fin = e["armee_a"] + horaires.DELAI_RESERVATION
+        r["reservation_restante"] = max(0, fin - horloge)
     return r
 
 def tableau():
@@ -425,6 +495,11 @@ def tableau():
     return "\n".join(lignes + ["", "JOURNAL", "-------"] + journal[:15])
 
 class Cloud(BaseHTTPRequestHandler):
+    timeout = 5  # coupe une connexion ouverte qui n'envoie rien
+    def do_POST(self):
+        with VERROU: self.traiter_post()
+    def do_GET(self):
+        with VERROU: self.traiter_get()
     def repondre(self, corps, type_="text/plain; charset=utf-8", code=200):
         data = corps.encode("utf-8") if isinstance(corps, str) else corps
         self.send_response(code); self.send_header("Content-Type", type_)
@@ -433,10 +508,16 @@ class Cloud(BaseHTTPRequestHandler):
     def json(self, objet, code=200):
         self.repondre(json.dumps(objet, ensure_ascii=False), "application/json; charset=utf-8", code)
     def lire_json(self):
-        try: return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8"))
+        try: d = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8"))
         except (ValueError, UnicodeDecodeError): return None
+        return d if isinstance(d, dict) else None
+    def repondre_client(self, identifiant, erreur):
+        """409 avec la phrase d'erreur, ou 200 avec l'état du client."""
+        if erreur:
+            return self.json({"erreur": erreur, "generation": demo_generation}, 409)
+        return self.json(client_json(identifiant))
     # --- API HTTP du cloud ---
-    def do_POST(self):
+    def traiter_post(self):
         u = urlparse(self.path)
         if u.path == "/api/condition":
             d = self.lire_json()
@@ -472,17 +553,30 @@ class Cloud(BaseHTTPRequestHandler):
             return self.json({"message": "Cloud réinitialisé.", "generation": demo_generation})
         if u.path == "/api/arme":
             d = self.lire_json()
-            if not d or not d.get("client") or not d.get("identifiant"): return self.json({"erreur": "Numéro ou session manquant."}, 400)
-            client = str(d["client"]).strip(); client = client if client.startswith("+") else "+" + client
-            if d.get("generation") != demo_generation:
-                return self.json({"erreur": "La démonstration a été réinitialisée.", "generation": demo_generation}, 409)
-            etat, erreur = armer(client, str(d.get("station", "A")), str(d["identifiant"]))
+            if (not d or not d.get("identifiant")
+                    or not isinstance(d.get("client"), dict)
+                    or not isinstance(d.get("moyen"), dict)):
+                return self.json(
+                    {"erreur": "Identité ou moyen de paiement manquant."}, 400)
+            if "generation" in d and d["generation"] != demo_generation:
+                return self.json({"erreur": "La démonstration a été réinitialisée.",
+                                  "generation": demo_generation}, 409)
+            identifiant, station = str(d["identifiant"]), str(d.get("station", "A"))
+            _, erreur = armer(d["client"], d["moyen"], station, identifiant)
             sauvegarder()
-            if not erreur:
-                etat = client_json(str(d["identifiant"]))
-                etat["offline_authorization"] = autorisation_hors_ligne(str(d["identifiant"]), str(d.get("station", "A")))
-                return self.json(etat)
-            return self.json({"erreur": erreur, "generation": demo_generation}, 409)
+            if erreur:
+                return self.repondre_client(identifiant, erreur)
+            etat = client_json(identifiant)
+            etat["offline_authorization"] = autorisation_hors_ligne(identifiant, station)
+            return self.json(etat)
+        if u.path == "/api/annuler":
+            d = self.lire_json()
+            if not d or not d.get("identifiant"):
+                return self.json({"erreur": "Session manquante."}, 400)
+            identifiant = str(d["identifiant"])
+            erreur = annuler(identifiant)
+            sauvegarder()
+            return self.repondre_client(identifiant, erreur)
         if u.path == "/evenements":
             brut = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8")
             try:
@@ -511,9 +605,12 @@ class Cloud(BaseHTTPRequestHandler):
                 return self.json({"erreur": "Traitement impossible: %s" % e}, 500)
             return self.json({"ok": True})
         self.repondre("Introuvable", code=404)
-    def do_GET(self):
+    def traiter_get(self):
         u, q = urlparse(self.path), parse_qs(urlparse(self.path).query)
-        if u.path in ("/parc", "/api/parc"): return self.json({"t": horloge, "generation": demo_generation, "planches": planches, "sessions": sessions})
+        if u.path in ("/parc", "/api/parc"):
+            return self.json({"t": horloge, "heure": horaires.texte_heure(horloge),
+                              "ouvert": horaires.locations_ouvertes(horloge),
+                              "generation": demo_generation, "planches": planches})
         if u.path == "/api/client": return self.json(client_json(q.get("identifiant", [""])[0]))
         if u.path == "/arme":
             client = q.get("client", ["+33600000000"])[0].strip(); client = client if client.startswith("+") else "+" + client
@@ -552,7 +649,8 @@ class Cloud(BaseHTTPRequestHandler):
                 action = (" <button type='button' onclick=\"reparer('%s')\">Réparée — remettre en service</button>" % html.escape(b, quote=True)
                           if p["statut"] == "maintenance" and not p.get("reparation_demandee") else "")
                 items.append("<li><strong>%s</strong> — %s%s%s</li>" % (html.escape(b), html.escape(status), detail, action))
-            page = "<!doctype html><meta charset=utf-8><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · t = %.0f s</h2><section class='foreign'><h3>À RÉÉQUILIBRER</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>RAPPORTS DE CONDITION</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><section style='margin-top:32px;padding:18px;border:2px solid #bd744c;border-radius:12px;background:#fffaf0'><h3>DÉMO</h3><button id='reset-start' type='button'>Réinitialiser la démo</button><div id='reset-confirm' hidden><p>Réinitialiser toutes les données temporaires de la démo ?</p><p>Les locations, réservations et états temporaires seront effacés.</p><button id='reset-cancel' type='button'>Annuler</button> <button id='reset-submit' type='button'>Réinitialiser</button></div><p>Efface les locations, réservations, sessions clients, files d'attente, rapports de condition, alertes/journal, compteurs de sorties et signaux de stations. Les états de maintenance et d'inspection sont remis à zéro. Aucun fichier ni simulateur physique n'est modifié.</p><p id='reset-message' role='status' aria-live='polite'></p></section><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}.foreign{padding:12px 16px;border:2px solid #a13225;border-radius:10px;background:#f7ded7;color:#76251c}button{padding:10px 14px;cursor:pointer}</style><script>async function reparer(b){const r=await fetch('/api/reparer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}async function rebalancer(b){const r=await fetch('/api/rebalancer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}const start=document.getElementById('reset-start'),box=document.getElementById('reset-confirm'),msg=document.getElementById('reset-message');start.onclick=()=>{box.hidden=false;start.disabled=true};document.getElementById('reset-cancel').onclick=()=>{box.hidden=true;start.disabled=false};document.getElementById('reset-submit').onclick=async()=>{const b=document.getElementById('reset-submit');b.disabled=true;try{const r=await fetch('/api/admin/reset-demo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmation:'REINITIALISER'})});const d=await r.json();if(!r.ok)throw Error(d.erreur);sessionStorage.setItem('korko-reset-message',JSON.stringify({message:d.message,until:Date.now()+10000}));location.reload()}catch(e){msg.textContent=e.message;b.disabled=false}};const saved=JSON.parse(sessionStorage.getItem('korko-reset-message')||'null');if(saved&&saved.until>Date.now())msg.textContent=saved.message;else sessionStorage.removeItem('korko-reset-message');function refresh(){setTimeout(()=>{if(box.hidden)location.reload();else refresh()},2000)}refresh();</script></body>" % (horloge, alertes, "".join(items), rapports, tableau())
+            fiches = "".join("<li>%s</li>" % html.escape(ligne) for ligne in CAISSE.fiches()) or "<li>Aucun client</li>"
+            page = "<!doctype html><meta charset=utf-8><title>KORKO admin</title><body style='font:14px ui-monospace,monospace;background:#ede3ce;color:#164b55;padding:24px'><h2>KORKO · administration · %s · t = %.0f s</h2><section class='foreign'><h3>À RÉÉQUILIBRER</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>ÉTAT DES PLANCHES</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>FICHES CLIENTS</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><section><h3>RAPPORTS DE CONDITION</h3><ul style='padding-left:20px;line-height:1.8'>%s</ul></section><pre>%s</pre><section style='margin-top:32px;padding:18px;border:2px solid #bd744c;border-radius:12px;background:#fffaf0'><h3>DÉMO</h3><button id='reset-start' type='button'>Réinitialiser la démo</button><div id='reset-confirm' hidden><p>Réinitialiser toutes les données temporaires de la démo ?</p><p>Les locations, réservations et états temporaires seront effacés.</p><button id='reset-cancel' type='button'>Annuler</button> <button id='reset-submit' type='button'>Réinitialiser</button></div><p>Efface les locations, réservations, sessions clients, files d'attente, rapports de condition, alertes/journal, compteurs de sorties et signaux de stations. Les états de maintenance et d'inspection sont remis à zéro. Les cautions encore bloquées sont libérées. Aucun fichier ni simulateur physique n'est modifié.</p><p id='reset-message' role='status' aria-live='polite'></p></section><style>.damaged{color:#a13225;font-weight:bold;background:#f4d8cf}.foreign{padding:12px 16px;border:2px solid #a13225;border-radius:10px;background:#f7ded7;color:#76251c}button{padding:10px 14px;cursor:pointer}</style><script>async function reparer(b){const r=await fetch('/api/reparer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}async function rebalancer(b){const r=await fetch('/api/rebalancer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({balise:b})});const d=await r.json();if(!r.ok)alert(d.erreur);else location.reload()}const start=document.getElementById('reset-start'),box=document.getElementById('reset-confirm'),msg=document.getElementById('reset-message');start.onclick=()=>{box.hidden=false;start.disabled=true};document.getElementById('reset-cancel').onclick=()=>{box.hidden=true;start.disabled=false};document.getElementById('reset-submit').onclick=async()=>{const b=document.getElementById('reset-submit');b.disabled=true;try{const r=await fetch('/api/admin/reset-demo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmation:'REINITIALISER'})});const d=await r.json();if(!r.ok)throw Error(d.erreur);sessionStorage.setItem('korko-reset-message',JSON.stringify({message:d.message,until:Date.now()+10000}));location.reload()}catch(e){msg.textContent=e.message;b.disabled=false}};const saved=JSON.parse(sessionStorage.getItem('korko-reset-message')||'null');if(saved&&saved.until>Date.now())msg.textContent=saved.message;else sessionStorage.removeItem('korko-reset-message');function refresh(){setTimeout(()=>{if(box.hidden)location.reload();else refresh()},2000)}refresh();</script></body>" % (horaires.texte_heure(horloge), horloge, alertes, "".join(items), fiches, rapports, html.escape(tableau()))
             return self.repondre(page, "text/html; charset=utf-8")
         if u.path in ("/", "/index.html"): return self.servir("index.html", "text/html; charset=utf-8")
         if u.path in ("/static/style.css", "/static/app.js"): return self.servir(os.path.basename(u.path), "text/css; charset=utf-8" if u.path.endswith("css") else "application/javascript; charset=utf-8")
@@ -564,8 +662,12 @@ class Cloud(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
 
 if __name__ == "__main__":
+    # sous Windows, une sortie redirigée vers un fichier refuse « → » et les émojis
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     charger()
+    PUBLIEUR.start()
     print("Cloud KORKO sur http://0.0.0.0:%d" % PORT)
+    print("  registre : %s" % chaine.lien_adresse(REGISTRE.address))
     print("  expérience client : /     administration : /admin     parc brut : /parc")
     print("  stations : POST /evenements\n")
-    HTTPServer(("0.0.0.0", PORT), Cloud).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", PORT), Cloud).serve_forever()

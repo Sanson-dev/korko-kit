@@ -16,6 +16,11 @@ CAUTION = 300.0
 FIN_CARTE_REFUSEE = "0002"     # comme la carte de test « refusée » de Stripe
 
 
+def euros(montant):
+    """1.5 devient « 1,50 € »."""
+    return ("%.2f €" % montant).replace(".", ",")
+
+
 class RefusDePaiement(Exception):
     """Le moyen de paiement ne permet pas de bloquer la caution."""
 
@@ -31,6 +36,14 @@ class Autorisation:
         self.etat = "en attente"
         self.debite = None
         self.liens = []
+
+    @classmethod
+    def depuis(cls, donnees):
+        """Recrée une autorisation sauvegardée dans la base du cloud."""
+        autorisation = cls(donnees["reference"], donnees["moyen"],
+                           donnees["libelle"])
+        vars(autorisation).update(donnees)
+        return autorisation
 
 
 class Prestataire:
@@ -50,8 +63,8 @@ class Prestataire:
         reference = "auth_sim_" + secrets.token_hex(8)
         autorisation = Autorisation(reference, moyen["type"], moyen["libelle"])
         autorisation.etat = "bloquée"
-        self.journaliser("PAIEMENT caution de %.0f € bloquée sur %s "
-                         "(simulation)" % (CAUTION, moyen["libelle"]))
+        self.journaliser("PAIEMENT caution de %s bloquée sur %s "
+                         "(simulation)" % (euros(CAUTION), moyen["libelle"]))
         return autorisation
 
     def bloquer_en_crypto(self, fiche):
@@ -74,6 +87,6 @@ class Prestataire:
         autorisation.debite = montant
         integral = montant >= autorisation.montant
         autorisation.etat = "débitée" if integral else "libérée"
-        self.journaliser("PAIEMENT %.2f € débités sur %s%s (simulation)"
-                         % (montant, autorisation.libelle,
+        self.journaliser("PAIEMENT %s débités sur %s%s (simulation)"
+                         % (euros(montant), autorisation.libelle,
                             "" if integral else ", caution libérée"))

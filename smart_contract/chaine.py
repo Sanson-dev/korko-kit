@@ -25,6 +25,8 @@ from web3.exceptions import (ContractLogicError, TimeExhausted,
                              TransactionNotFound, Web3RPCError)
 from web3.middleware import SignAndSendRawMiddlewareBuilder
 
+from smart_contract.boite_envoi import BoiteEnvoi
+
 RPC_FUJI = "https://api.avax-test.network/ext/bc/C/rpc"
 EXPLORATEUR = "https://testnet.snowtrace.io"
 DOSSIER = os.path.dirname(os.path.abspath(__file__))
@@ -37,6 +39,11 @@ PAUSE_RESEAU = 5       # secondes avant de réessayer si Fuji est injoignable
 
 #: Fuji injoignable, réponse d'erreur du nœud, ou page HTML d'un portail wifi
 ERREURS_RESEAU = (OSError, Web3RPCError, json.JSONDecodeError)
+
+#: le compte du cloud signe depuis plusieurs fils (registre, séquestre) :
+#: une transaction à la fois, jusqu'à sa confirmation, sinon deux fils
+#: prendraient le même nonce
+VERROU_CLOUD = threading.Lock()
 
 
 class TransactionAnnulee(Exception):
@@ -151,104 +158,142 @@ def lire_parc(registre, secours):
         return {b: code for code, balises in secours.items() for b in balises}
 
 
+def creer_publieur(registre, journaliser):
+    """Retourne le publieur du cloud, avec sa boîte d'envoi persistante."""
+    return Publieur(registre, compte_du_cloud(), BoiteEnvoi(), journaliser)
+
+
+def resumer(evenement):
+    """« DEPART korko-01 en A » : l'événement en quelques mots."""
+    return "%s %s en %s" % (evenement.get("evenement"),
+                            evenement.get("balise"), evenement.get("station"))
+
+
+def empreinte(envoi):
+    """Retourne le hash de la transaction signée de l'envoi."""
+    return Web3.keccak(hexstr=envoi["brut"])
+
+
+#: ligne du journal selon l'issue d'un envoi
+MESSAGES = {"inscrit": "CHAÎNE %s : %s",
+            "refusé": "CHAÎNE refus : %s (%s)",
+            "annulée": "CHAÎNE annulée : %s : %s",
+            "non confirmée": "CHAÎNE non confirmée : %s : %s",
+            "ignoré": "CHAÎNE ignoré : %s (%s)"}
+
+
 class Publieur(threading.Thread):
     """Inscrit les événements des stations dans le registre, un par un.
 
-    Chaque événement est signé une seule fois. Si la réponse du nœud se
-    perd, l'essai suivant renvoie la même transaction signée : l'événement
-    ne peut pas être inscrit deux fois.
+    Chaque événement passe d'abord par la boîte d'envoi persistante
+    (boite_envoi.py) : une coupure ou un redémarrage du cloud ne le perd
+    pas, et un événement reçu deux fois n'est inscrit qu'une fois. Il est
+    signé une seule fois : si la réponse du nœud se perd, même après un
+    redémarrage, l'essai suivant renvoie la même transaction signée.
     """
 
-    def __init__(self, registre, compte, journaliser):
+    def __init__(self, registre, compte, boite, journaliser):
         super().__init__(daemon=True)
         self.registre = registre
         self.compte = compte
+        self.boite = boite
         self.journaliser = journaliser
         self.file = queue.Queue()
-        self.nonce, self.signee = None, None
         self.dernier_incident = None
+        for envoi in boite.en_attente():   # repris après un redémarrage
+            self.file.put(envoi)
 
     def publier(self, evenement):
-        """Met en file un DEPART, un RETOUR ou une ETRANGERE."""
-        self.file.put(evenement)
+        """Dépose un DEPART, un RETOUR ou une ETRANGERE dans la boîte
+        d'envoi, puis le met en file ; un événement déjà reçu est ignoré."""
+        envoi = self.boite.deposer(evenement)
+        if envoi:
+            self.file.put(envoi)
 
     def run(self):
         """Inscrit la file dans l'ordre ; réessaie tant que Fuji se tait."""
         while True:
-            evenement = self.file.get()
+            envoi = self.file.get()
             try:
-                while not self.inscrire(evenement):
+                while not self.inscrire_seul(envoi):
                     time.sleep(PAUSE_RESEAU)
             except Exception as erreur:
                 # une erreur imprévue (événement mal formé…) ne doit pas
                 # arrêter la file
-                self.signee = None
-                self.journaliser("CHAÎNE ignoré : %r (%r)"
-                                 % (evenement, erreur))
+                self.clore(envoi, "ignoré", repr(erreur))
 
-    def inscrire(self, evenement):
+    def inscrire_seul(self, envoi):
+        """Inscrit l'événement pendant qu'aucun autre fil du cloud ne signe ;
+        vrai s'il est traité, faux s'il faut réessayer."""
+        with VERROU_CLOUD:
+            return self.inscrire(envoi)
+
+    def inscrire(self, envoi):
         """Vrai si l'événement est traité, faux s'il faut réessayer."""
-        resume = "%s %s en %s" % (evenement["evenement"],
-                                  evenement["balise"], evenement["station"])
         try:
-            if self.signee is None:
-                self.nonce, self.signee = self.signer(evenement)
-            envoi = self.signee.raw_transaction
-            self.registre.w3.eth.send_raw_transaction(envoi)
+            if envoi["brut"] is None:
+                self.signer(envoi)
+            self.registre.w3.eth.send_raw_transaction(envoi["brut"])
         except ContractLogicError as erreur:
-            self.journaliser("CHAÎNE refus : %s (%s)"
-                             % (resume, nommer_refus(self.registre, erreur)))
+            self.clore(envoi, "refusé", nommer_refus(self.registre, erreur))
             return True
         except ERREURS_RESEAU as erreur:
-            if not self.deja_envoyee():
+            if not self.deja_envoyee(envoi):
                 self.signaler_incident("CHAÎNE en échec : %s (%s)"
-                                       % (resume, erreur))
+                                       % (resumer(envoi["evenement"]), erreur))
                 return False
-        hash_transaction, self.signee = self.signee.hash, None
         self.dernier_incident = None
-        self.confirmer(resume, hash_transaction)
+        self.confirmer(envoi)
         return True
 
-    def signer(self, evenement):
-        """Retourne le nonce et la transaction signée de l'événement."""
+    def signer(self, envoi):
+        """Signe la transaction de l'envoi et garde la signature."""
         adresse = self.compte.address
         nonce = self.registre.w3.eth.get_transaction_count(adresse, "pending")
-        transaction = self.appel_pour(evenement).build_transaction(
+        transaction = self.appel_pour(envoi["evenement"]).build_transaction(
             {"from": adresse, "nonce": nonce})
-        return nonce, self.compte.sign_transaction(transaction)
+        signee = self.compte.sign_transaction(transaction)
+        envoi["nonce"] = nonce
+        envoi["brut"] = signee.raw_transaction.to_0x_hex()
+        self.boite.signer(envoi["event_id"], nonce, envoi["brut"])
 
-    def deja_envoyee(self):
+    def deja_envoyee(self, envoi):
         """Vrai si le nœud connaît déjà la transaction signée.
 
         Si une autre transaction du même compte a pris son nonce, elle ne
         sera jamais minée : on l'oublie pour la signer à nouveau.
         """
-        if self.signee is None:
+        if envoi["brut"] is None:
             return False
         eth = self.registre.w3.eth
         try:
-            eth.get_transaction(self.signee.hash)
+            eth.get_transaction(empreinte(envoi))
             return True
         except TransactionNotFound:
-            if self.nonce < eth.get_transaction_count(self.compte.address):
-                self.signee = None
+            if envoi["nonce"] < eth.get_transaction_count(self.compte.address):
+                envoi["brut"] = None
+                self.boite.signer(envoi["event_id"], None, None)
         except ERREURS_RESEAU:
             pass
         return False
 
-    def confirmer(self, resume, hash_transaction):
+    def confirmer(self, envoi):
         """Attend la confirmation, sans jamais réémettre la transaction."""
+        preuve = lien(empreinte(envoi))
         try:
-            attendre(self.registre.w3, hash_transaction)
+            attendre(self.registre.w3, empreinte(envoi))
         except TransactionAnnulee:
-            self.journaliser("CHAÎNE annulée : %s : %s"
-                             % (resume, lien(hash_transaction)))
+            self.clore(envoi, "annulée", preuve)
         except (TimeExhausted, *ERREURS_RESEAU):
-            self.journaliser("CHAÎNE non confirmée : %s : %s"
-                             % (resume, lien(hash_transaction)))
+            self.clore(envoi, "non confirmée", preuve)
         else:
-            self.journaliser("CHAÎNE %s : %s"
-                             % (resume, lien(hash_transaction)))
+            self.clore(envoi, "inscrit", preuve)
+
+    def clore(self, envoi, statut, preuve):
+        """Sort l'envoi de l'attente et le journalise."""
+        self.boite.clore(envoi["event_id"], statut, preuve)
+        self.journaliser(MESSAGES[statut]
+                         % (resumer(envoi["evenement"]), preuve))
 
     def signaler_incident(self, message):
         """Journalise un incident une seule fois, pas à chaque essai."""

@@ -1,26 +1,38 @@
 """
 caisse.py — le paiement d'une location, de la réservation au retour.
 
-À la réservation : fiche client, caution bloquée, message de bienvenue.
+À la réservation : fiche client, caution bloquée, rappel des 23 h ; la
+planche doit être prise dans les 10 minutes.
+Au départ : message « Bonne session de surf », avec l'heure du retrait.
+À l'annulation, ou si la planche n'est pas prise à temps : rien n'est
+débité, caution libérée.
 Au retour : prix de la location débité, caution libérée.
 À 23 h sans retour : caution débitée.
-Les messages sont des SMS simulés, affichés dans l'appli du client.
+Les messages sont des SMS simulés, affichés dans l'appli du client ; les
+passages entre ** s'y affichent en gras.
 """
 
 from paiement import clients, crypto, horaires, prestataire
+from paiement.prestataire import euros
 
-#: les passages entre ** s'affichent en gras dans l'appli
-BIENVENUE = ("🏄 Bonne session de surf, amusez-vous bien ! ☀️🌊 Pour rappel, "
-             "**vous devez nous rendre la planche avant 23 heures**, sinon la "
-             "caution vous sera débitée.")
+RESERVATION = ("Votre planche %s est réservée 🏄 Pour rappel, **vous devez "
+               "nous rendre la planche avant 23 heures**, sinon la caution "
+               "vous sera débitée.")
+DEPART = ("🏄 Bonne session de surf, amusez-vous bien ! ☀️🌊 Vous avez retiré "
+          "la planche %s à %s. Pour rappel, **vous devez nous rendre la "
+          "planche avant 23 heures**, sinon la caution vous sera débitée.")
+EXPIRATION = ("⏱️ Temps écoulé : la planche %s n'a pas été retirée dans les "
+              "%d minutes. Votre réservation est annulée et rien n'a été "
+              "débité. Pour surfer, il vous suffit de refaire une "
+              "réservation.")
 
 #: refus à expliquer au client, sans rien réserver
 REFUS = (clients.ErreurFiche, prestataire.RefusDePaiement)
 
 
-def euros(montant):
-    """1.5 devient « 1,50 € »."""
-    return ("%.2f €" % montant).replace(".", ",")
+def numero(location):
+    """« korko-01 » devient « 01 » : le numéro affiché sur la planche."""
+    return location["balise"].replace("korko-", "")
 
 
 def creer_caisse(journaliser):
@@ -39,24 +51,37 @@ class Caisse:
         self.journaliser = journaliser
 
     def reserver(self, location, client, moyen, t):
-        """Identifie le client et bloque sa caution ; lève REFUS."""
-        fiche = self.fichier.enregistrer(client, moyen)
+        """Identifie le client et bloque sa caution ; lève REFUS.
+
+        La fiche n'est enregistrée qu'une fois la caution acceptée (bloquée
+        pour la carte et Apple Pay, confiée au séquestre pour la crypto) :
+        une carte refusée ne devient pas le moyen enregistré.
+        """
+        fiche = self.fichier.preparer(client, moyen)
         autorisation = self.prestataire.bloquer(fiche)
+        self.fichier.retenir(fiche)
         location.update({
             "client": "%s %s" % (fiche["prenom"], fiche["nom"]),
             "identite": {cle: fiche[cle]
                          for cle in ("prenom", "nom", "telephone")},
             "autorisation": autorisation, "messages": []})
-        self.envoyer(location, BIENVENUE, t)
+        self.envoyer(location, RESERVATION % numero(location), t)
+
+    def partir(self, location, t):
+        """La planche a quitté la station : bonne session !"""
+        self.envoyer(location, DEPART % (numero(location),
+                                         horaires.texte_heure(t)), t)
 
     def terminer(self, location, montant, t):
         """Débite le prix de la location et libère la caution."""
         autorisation = location["autorisation"]
         self.prestataire.debiter(autorisation, montant)
         self.archiver(location, montant, t)
-        self.envoyer(location, "Merci %s ! 🏄 %s débités sur %s. Votre caution "
-                     "de %s est libérée. À la prochaine fois ! 🌊"
-                     % (location["identite"]["prenom"], euros(montant),
+        self.envoyer(location, "Merci %s ! 🏄 Planche %s rendue à %s : %s "
+                     "débités sur %s. Votre caution de %s est libérée. À la "
+                     "prochaine fois ! 🌊"
+                     % (location["identite"]["prenom"], numero(location),
+                        horaires.texte_heure(t), euros(montant),
                         autorisation.libelle, euros(autorisation.montant)), t)
 
     def annuler(self, location, t):
@@ -65,6 +90,13 @@ class Caisse:
         self.envoyer(location, "Réservation annulée, %s : rien n'a été débité "
                      "et votre caution est libérée. À bientôt ! 🌊"
                      % location["identite"]["prenom"], t)
+
+    def expirer(self, location, t):
+        """La planche n'a pas été prise à temps (horaires.DELAI_RESERVATION) :
+        rien n'est débité, la réservation est annulée."""
+        self.prestataire.debiter(location["autorisation"], 0.0)
+        minutes = horaires.DELAI_RESERVATION // 60
+        self.envoyer(location, EXPIRATION % (numero(location), minutes), t)
 
     def saisir_caution(self, location, t):
         """La planche n'est pas revenue avant 23 h : la caution est débitée."""
@@ -101,7 +133,7 @@ class Caisse:
         return lignes
 
     def resume(self, location):
-        """Retourne ce que l'appli du client affiche de son paiement."""
+        """Retourne l'identité, le paiement, la caution et les messages."""
         autorisation = location["autorisation"]
         return {
             "client": location["identite"],

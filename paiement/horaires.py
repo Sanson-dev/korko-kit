@@ -12,6 +12,7 @@ import time
 DEBUT_SIMULATION = 9 * 3600      # le simulateur démarre à 9 h 00
 FERMETURE = 22 * 3600            # plus de nouvelle location à partir de 22 h
 LIMITE_RETOUR = 23 * 3600        # planche à rendre avant 23 h
+DELAI_RESERVATION = 10 * 60      # planche réservée à prendre dans les 10 min
 JOUR = 24 * 3600
 DATE_UNIX_MINIMALE = 10 ** 9     # en dessous, t vient du simulateur
 

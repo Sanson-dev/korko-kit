@@ -1,0 +1,248 @@
+{
+ "adresse": "0x19118f120914576B30DcdBe32Ab23175C4CAB795",
+ "abi": [
+  {
+   "inputs": [],
+   "stateMutability": "nonpayable",
+   "type": "constructor"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "bytes32",
+     "name": "location",
+     "type": "bytes32"
+    }
+   ],
+   "name": "CautionInconnue",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "bytes32",
+     "name": "location",
+     "type": "bytes32"
+    }
+   ],
+   "name": "CautionReglee",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "bytes32",
+     "name": "location",
+     "type": "bytes32"
+    }
+   ],
+   "name": "LocationExistante",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "uint256",
+     "name": "montantDu",
+     "type": "uint256"
+    },
+    {
+     "internalType": "uint256",
+     "name": "caution",
+     "type": "uint256"
+    }
+   ],
+   "name": "MontantExcessif",
+   "type": "error"
+  },
+  {
+   "inputs": [],
+   "name": "MontantNul",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "address",
+     "name": "appelant",
+     "type": "address"
+    }
+   ],
+   "name": "NonAutorise",
+   "type": "error"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "address",
+     "name": "destinataire",
+     "type": "address"
+    }
+   ],
+   "name": "VirementRefuse",
+   "type": "error"
+  },
+  {
+   "anonymous": false,
+   "inputs": [
+    {
+     "indexed": true,
+     "internalType": "bytes32",
+     "name": "location",
+     "type": "bytes32"
+    },
+    {
+     "indexed": true,
+     "internalType": "address",
+     "name": "client",
+     "type": "address"
+    },
+    {
+     "indexed": false,
+     "internalType": "uint256",
+     "name": "montant",
+     "type": "uint256"
+    }
+   ],
+   "name": "CautionBloquee",
+   "type": "event"
+  },
+  {
+   "anonymous": false,
+   "inputs": [
+    {
+     "indexed": true,
+     "internalType": "bytes32",
+     "name": "location",
+     "type": "bytes32"
+    },
+    {
+     "indexed": false,
+     "internalType": "uint256",
+     "name": "montant",
+     "type": "uint256"
+    }
+   ],
+   "name": "CautionSaisie",
+   "type": "event"
+  },
+  {
+   "anonymous": false,
+   "inputs": [
+    {
+     "indexed": true,
+     "internalType": "bytes32",
+     "name": "location",
+     "type": "bytes32"
+    },
+    {
+     "indexed": false,
+     "internalType": "uint256",
+     "name": "paye",
+     "type": "uint256"
+    },
+    {
+     "indexed": false,
+     "internalType": "uint256",
+     "name": "rendu",
+     "type": "uint256"
+    }
+   ],
+   "name": "LocationPayee",
+   "type": "event"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "bytes32",
+     "name": "location",
+     "type": "bytes32"
+    }
+   ],
+   "name": "bloquer",
+   "outputs": [],
+   "stateMutability": "payable",
+   "type": "function"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "bytes32",
+     "name": "location",
+     "type": "bytes32"
+    },
+    {
+     "internalType": "uint256",
+     "name": "montantDu",
+     "type": "uint256"
+    }
+   ],
+   "name": "cloturer",
+   "outputs": [],
+   "stateMutability": "nonpayable",
+   "type": "function"
+  },
+  {
+   "inputs": [],
+   "name": "korko",
+   "outputs": [
+    {
+     "internalType": "address",
+     "name": "",
+     "type": "address"
+    }
+   ],
+   "stateMutability": "view",
+   "type": "function"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "bytes32",
+     "name": "location",
+     "type": "bytes32"
+    }
+   ],
+   "name": "lireCaution",
+   "outputs": [
+    {
+     "components": [
+      {
+       "internalType": "address",
+       "name": "client",
+       "type": "address"
+      },
+      {
+       "internalType": "bool",
+       "name": "reglee",
+       "type": "bool"
+      },
+      {
+       "internalType": "uint256",
+       "name": "montant",
+       "type": "uint256"
+      }
+     ],
+     "internalType": "struct SequestreKorko.Caution",
+     "name": "",
+     "type": "tuple"
+    }
+   ],
+   "stateMutability": "view",
+   "type": "function"
+  },
+  {
+   "inputs": [
+    {
+     "internalType": "bytes32",
+     "name": "location",
+     "type": "bytes32"
+    }
+   ],
+   "name": "saisir",
+   "outputs": [],
+   "stateMutability": "nonpayable",
+   "type": "function"
+  }
+ ]
+}
