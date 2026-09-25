@@ -5,10 +5,15 @@ import json
 import html
 import hashlib
 import os
+import socket
+import threading
 import time
 import uuid
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+import photo_verification as photo
+import photo_queue as file_photos
 
 PORT, TARIF_MIN, PLAFOND = 9000, 0.20, 600
 RESERVATION_TIMEOUT = 120
@@ -23,12 +28,19 @@ rapports_planches = []
 journal, signes, horloge = [], {}, 0.0
 dernier_contact = {}
 evenements_recus = set()
-demo_generation = 0
+state_lock = threading.RLock()
+photo_tasks = file_photos.FilePhotos()
+demo_generation = photo_tasks.get_demo_generation()
 
-def reinitialiser_demo():
+def photo_note(texte):
+    with state_lock:
+        note(texte)
+
+def reinitialiser_demo(t=0.0):
     """Efface l'état temporaire du cloud et restaure le parc prototype."""
     global horloge, demo_generation
     demo_generation += 1
+    photo_tasks.set_demo_generation(demo_generation)
     sessions.clear()
     file_attente.clear()
     reservations.clear()
@@ -38,7 +50,7 @@ def reinitialiser_demo():
     signes.clear()
     dernier_contact.clear()
     evenements_recus.clear()
-    horloge = 0.0
+    horloge = float(t or 0.0)
     planches.clear()
     planches.update({b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
                      for b, s in PARC.items()})
@@ -52,7 +64,7 @@ def note(texte):
     print("  %s" % journal[0], flush=True)
 
 def sms(client, texte):
-    note("SMS → %s : %s" % (client, texte))
+    note("SMS -> %s : %s" % (client, texte))
 
 def suggestion(station):
     dispo = [b for b, p in planches.items()
@@ -73,7 +85,7 @@ def armer(client, station, identifiant):
             "armee_a": horloge, "reservation_t": horloge, "reservation_status": "Réservée",
             "session_id": uuid.uuid4().hex}
     client_sessions[identifiant] = etat
-    note("%s arme en station %s → %s" % (client, station, balise))
+    note("%s arme en station %s -> %s" % (client, station, balise))
     return etat, None
 
 def cloturer(balise, station, t, hors_base):
@@ -87,13 +99,28 @@ def cloturer(balise, station, t, hors_base):
         note("RÉPARATION VALIDÉE : %s de retour à son râtelier %s" % (balise, station))
     s = sessions.pop(balise, None)
     if s:
-        duree, montant = max(0, t - s["debut"]), max(0, t - s["debut"]) / 60 * TARIF_MIN
         identifiant = s.get("identifiant")
-        if identifiant in client_sessions:
-            client_sessions[identifiant].update({"etat": "retournée", "retour_a": t, "duree": duree,
-                                                  "montant": montant, "retour_station": station})
-        if not s["client"].startswith("Départ ambigu"):
-            sms(s["client"], "Merci ! %s, %s, %.2f €. Caution libérée." % (balise, duree_txt(duree), montant))
+        client = s["client"]
+        debut = s["debut"]
+    else:
+        # Tolère un retour tardif si une ancienne version a déjà retiré
+        # la session du suivi des retards, mais que le client est encore actif.
+        ouvertes = [(i, e) for i, e in client_sessions.items()
+                    if e.get("balise") == balise and e.get("etat") == "en cours"]
+        if len(ouvertes) == 1:
+            identifiant, experience = ouvertes[0]
+            client = experience["client"]
+            debut = experience.get("depart_a", t)
+        else:
+            identifiant = client = debut = None
+    if identifiant is not None:
+        duree = max(0, t - debut)
+        montant = duree / 60 * TARIF_MIN
+        client_sessions[identifiant].update({"etat": "retournée", "retour_a": t, "duree": duree,
+                                              "montant": montant, "retour_station": station})
+        if not client.startswith("Départ ambigu"):
+            sms(client, "Merci ! %s, %s, %.2f €. Caution libérée." %
+                (balise, duree_txt(duree), montant))
     if hors_base:
         note("RÉÉQUILIBRAGE : %s rendue en %s, sa base est %s" % (balise, station, p["origine"]))
 
@@ -140,9 +167,10 @@ def retards():
     for balise, s in list(sessions.items()):
         duree = horloge - s["debut"]
         if duree > PERDUE:
-            sms(s["client"], "%s jamais rendue. Caution débitée : elle est à toi." % balise)
-            planches[balise]["statut"] = "perdue"
-            del sessions[balise]
+            if not s.get("perdue"):
+                sms(s["client"], "%s jamais rendue. Caution débitée : elle est à toi." % balise)
+                planches[balise]["statut"] = "perdue"
+                s["perdue"] = True
         elif duree > PLAFOND and not s["rappel"]:
             s["rappel"] = True
             sms(s["client"], "Ta session tourne depuis %s. Raccroche %s en sortant." % (duree_txt(duree), balise))
@@ -232,8 +260,16 @@ def traiter(ev):
 
 def client_json(identifiant):
     e = client_sessions.get(identifiant)
+    if not e:
+        # Les données minimales de la location restent consultables si le cloud
+        # a redémarré pendant ou après l'analyse photo.
+        e = photo_tasks.session_snapshot(identifiant)
     if not e: return {"etat": "inconnue", "t": horloge, "generation": demo_generation}
     r = dict(e); r["t"] = horloge; r["generation"] = demo_generation
+    if r["etat"] == "retournée":
+        tache = photo_tasks.latest_for_client(identifiant, r.get("session_id"))
+        if tache:
+            r["photo_task"] = tache
     if r["etat"] == "en cours":
         r["duree"] = max(0, horloge - r["depart_a"])
         r["montant"] = r["duree"] / 60 * TARIF_MIN
@@ -271,8 +307,80 @@ class Cloud(BaseHTTPRequestHandler):
     def lire_json(self):
         try: return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8"))
         except (ValueError, UnicodeDecodeError): return None
+
+    def verifier_photo(self):
+        """Valide la session et met durablement sa photo dans la file SQLite."""
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            return self.json({"erreur": "Envoi invalide. Réessayez avec une photo."}, 415)
+        try:
+            taille = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return self.json({"erreur": "Taille de fichier invalide."}, 400)
+        if taille < 1:
+            return self.json({"erreur": "Aucune photo reçue."}, 400)
+        if taille > photo.MAX_REQUEST_BYTES:
+            return self.json({"erreur": "La photo dépasse 8 Mo. Choisissez une image plus légère."}, 413)
+        try:
+            donnees = json.loads(self.rfile.read(taille).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return self.json({"erreur": "L'envoi de la photo est illisible. Réessayez."}, 400)
+        if not isinstance(donnees, dict):
+            return self.json({"erreur": "Envoi de photo invalide."}, 400)
+        identifiant, session_id = donnees.get("identifiant"), donnees.get("session_id")
+        if not isinstance(identifiant, str) or not isinstance(session_id, str):
+            return self.json({"erreur": "Session de location manquante."}, 400)
+        task_id = donnees.get("task_id")
+        if not isinstance(task_id, str):
+            return self.json({"erreur": "Identifiant de tâche manquant. Réessayez l'envoi."}, 400)
+        with state_lock:
+            experience = client_sessions.get(identifiant)
+            if not experience:
+                experience = photo_tasks.session_snapshot(identifiant)
+            if (not experience or experience.get("etat") != "retournée" or
+                    experience.get("session_id") != session_id or
+                    donnees.get("generation") != demo_generation):
+                return self.json({"erreur": "Cette session n'est plus disponible. Actualisez la page."}, 409)
+            planche_attendue = experience["balise"]
+            generation = demo_generation
+        try:
+            mime, image = photo.decoder_image(donnees.get("image"))
+            with state_lock:
+                current = client_sessions.get(identifiant)
+                if not current:
+                    current = photo_tasks.session_snapshot(identifiant)
+                if (demo_generation != generation or not current or
+                        current.get("etat") != "retournée" or current.get("session_id") != session_id or
+                        current.get("balise") != planche_attendue):
+                    return self.json({"erreur": "La session a changé pendant l'envoi. Actualisez la page."}, 409)
+                tache, nouvelle = photo_tasks.enqueue(
+                    task_id=task_id, client_id=identifiant, session_id=session_id,
+                    board=planche_attendue,
+                    station=current.get("retour_station", current.get("station", "A")),
+                    generation=generation, retour_t=current.get("retour_a", horloge),
+                    duree=current.get("duree", 0), montant=current.get("montant", 0),
+                    mime=mime, image=image,
+                )
+        except file_photos.FileTacheErreur as erreur:
+            return self.json({"erreur": str(erreur)}, erreur.code)
+        except photo.PhotoErreur as erreur:
+            return self.json({"erreur": str(erreur)}, erreur.code)
+        except Exception as erreur:
+            photo_note("PHOTO %s : mise en file impossible (%s)" %
+                       (planche_attendue, type(erreur).__name__))
+            return self.json({"erreur": "Le cloud n'a pas pu enregistrer la photo. Réessayez."}, 500)
+        if nouvelle:
+            photo_note("PHOTO %s : reçue, analyse en attente" % planche_attendue)
+        return self.json({"tache": tache, "generation": generation,
+                          "message": "Photo reçue. Analyse en attente."}, 202)
+
     def do_POST(self):
         u = urlparse(self.path)
+        if u.path == "/api/photo-verification":
+            return self.verifier_photo()
+        with state_lock:
+            return self._post_rapide(u)
+
+    def _post_rapide(self, u):
         if u.path == "/api/condition":
             d = self.lire_json()
             if not d or not d.get("identifiant") or not d.get("session_id"):
@@ -313,6 +421,12 @@ class Cloud(BaseHTTPRequestHandler):
                 for ev in events:
                     if not isinstance(ev, dict):
                         return self.json({"erreur": "Événement invalide."}, 400)
+                    if ev.get("evenement") == "RESET":
+                        # Le simulateur ouvre une nouvelle scène avec t=0.
+                        # La démo entière suit cette même ligne de temps.
+                        reinitialiser_demo(ev.get("t", 0.0))
+                        note("nouvelle scène reçue de la station %s" % ev.get("station", "A"))
+                        continue
                     if ev.get("evenement") == "TIC":
                         traiter(ev)
                         continue
@@ -331,7 +445,13 @@ class Cloud(BaseHTTPRequestHandler):
             return self.json({"ok": True})
         self.repondre("Introuvable", code=404)
     def do_GET(self):
+        with state_lock:
+            return self._get_verrouille()
+
+    def _get_verrouille(self):
         u, q = urlparse(self.path), parse_qs(urlparse(self.path).query)
+        if u.path == "/api/capabilities":
+            return self.json({"version": "photo-queue-1", "photo_verification": True})
         if u.path in ("/parc", "/api/parc"): return self.json({"t": horloge, "generation": demo_generation, "planches": planches, "sessions": sessions})
         if u.path == "/api/client": return self.json(client_json(q.get("identifiant", [""])[0]))
         if u.path == "/arme":
@@ -375,8 +495,26 @@ class Cloud(BaseHTTPRequestHandler):
         except OSError: self.repondre("Fichier statique introuvable", code=404)
     def log_message(self, *args): pass
 
+
+class CloudHTTPServer(ThreadingHTTPServer):
+    """Un seul cloud par port, y compris sous Windows."""
+
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
 if __name__ == "__main__":
-    print("Cloud KORKO sur http://0.0.0.0:%d" % PORT)
+    try:
+        serveur = CloudHTTPServer(("0.0.0.0", PORT), Cloud)
+    except OSError as erreur:
+        raise SystemExit("Port %d indisponible : arrêtez l'ancien mon_cloud.py avant de relancer le cloud (%s)." %
+                         (PORT, type(erreur).__name__))
+    print("Cloud KORKO photo-queue-1 sur http://0.0.0.0:%d" % PORT)
     print("  expérience client : /     administration : /admin     parc brut : /parc")
-    print("  stations : POST /evenements\n")
-    HTTPServer(("0.0.0.0", PORT), Cloud).serve_forever()
+    print("  stations : POST /evenements")
+    print("  file photo durable : %s\n" % photo_tasks.db_path)
+    photo_tasks.start(on_log=photo_note)
+    serveur.serve_forever()
