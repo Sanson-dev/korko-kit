@@ -13,7 +13,7 @@ La crypto est réelle, sur le réseau de test Fuji : voir crypto.py.
 import secrets
 
 CAUTION = 300.0
-FIN_CARTE_REFUSEE = "0002"     # comme la carte de test « refusée » de Stripe
+FIN_CARTE_REFUSEE = "0002"  # comme la carte de test « refusée » de Stripe
 
 
 def euros(montant):
@@ -40,8 +40,7 @@ class Autorisation:
     @classmethod
     def depuis(cls, donnees):
         """Recrée une autorisation sauvegardée dans la base du cloud."""
-        autorisation = cls(donnees["reference"], donnees["moyen"],
-                           donnees["libelle"])
+        autorisation = cls(donnees["reference"], donnees["moyen"], donnees["libelle"])
         vars(autorisation).update(donnees)
         return autorisation
 
@@ -50,7 +49,7 @@ class Prestataire:
     """Bloque et débite les cautions ; la crypto passe par le séquestre."""
 
     def __init__(self, sequestre, journaliser):
-        self.sequestre = sequestre         # crypto.Sequestre, ou None
+        self.sequestre = sequestre  # crypto.Sequestre, ou None
         self.journaliser = journaliser
 
     def bloquer(self, fiche):
@@ -63,18 +62,21 @@ class Prestataire:
         reference = "auth_sim_" + secrets.token_hex(8)
         autorisation = Autorisation(reference, moyen["type"], moyen["libelle"])
         autorisation.etat = "bloquée"
-        self.journaliser("PAIEMENT caution de %s bloquée sur %s "
-                         "(simulation)" % (euros(CAUTION), moyen["libelle"]))
+        self.journaliser(
+            "PAIEMENT caution de %s bloquée sur %s "
+            "(simulation)" % (euros(CAUTION), moyen["libelle"])
+        )
         return autorisation
 
     def bloquer_en_crypto(self, fiche):
         """Confie la caution au séquestre de Fuji ; le blocage suit."""
         if self.sequestre is None:
-            raise RefusDePaiement("Paiement crypto indisponible pour le "
-                                  "moment : choisissez un autre moyen.")
+            raise RefusDePaiement(
+                "Paiement crypto indisponible pour le "
+                "moment : choisissez un autre moyen."
+            )
         reference = "0x" + secrets.token_hex(32)
-        autorisation = Autorisation(reference, "crypto",
-                                    fiche["moyen"]["libelle"])
+        autorisation = Autorisation(reference, "crypto", fiche["moyen"]["libelle"])
         self.sequestre.bloquer(autorisation, fiche["portefeuille"]["cle"])
         return autorisation
 
@@ -87,6 +89,11 @@ class Prestataire:
         autorisation.debite = montant
         integral = montant >= autorisation.montant
         autorisation.etat = "débitée" if integral else "libérée"
-        self.journaliser("PAIEMENT %s débités sur %s%s (simulation)"
-                         % (euros(montant), autorisation.libelle,
-                            "" if integral else ", caution libérée"))
+        self.journaliser(
+            "PAIEMENT %s débités sur %s%s (simulation)"
+            % (
+                euros(montant),
+                autorisation.libelle,
+                "" if integral else ", caution libérée",
+            )
+        )

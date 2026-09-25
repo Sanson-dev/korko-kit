@@ -21,33 +21,43 @@ from urllib.parse import urlparse, parse_qs
 # --- Paramètres du cloud et du parc ---
 PORT = 9000
 
-TARIF_MIN = 0.20          # € la minute
-PLAFOND = 600             # secondes avant le rappel SMS.
-                          # 3 h en exploitation réelle ; 10 min ici pour
-                          # que ça se déclenche pendant une démo.
-PERDUE = 3 * PLAFOND      # au-delà : planche réputée perdue, caution débitée
+TARIF_MIN = 0.20  # € la minute
+PLAFOND = 600  # secondes avant le rappel SMS.
+# 3 h en exploitation réelle ; 10 min ici pour
+# que ça se déclenche pendant une démo.
+PERDUE = 3 * PLAFOND  # au-delà : planche réputée perdue, caution débitée
 
 #: la flotte : quelle planche appartient à quelle station
-PARC = {"korko-01": "A", "korko-02": "A",
-        "korko-03": "B", "korko-04": "B",
-        "korko-05": "C", "korko-06": "C"}
+PARC = {
+    "korko-01": "A",
+    "korko-02": "A",
+    "korko-03": "B",
+    "korko-04": "B",
+    "korko-05": "C",
+    "korko-06": "C",
+}
 
-planches = {b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
-            for b, s in PARC.items()}
-sessions = {}          # balise -> {"client":…, "debut":…, "rappel":bool}
-file_attente = {}      # station -> [clients armés, pas encore partis]
-journal = []           # lignes de texte, la plus récente en tête
+planches = {
+    b: {"origine": s, "ou": s, "statut": "au râtelier", "sorties": 0}
+    for b, s in PARC.items()
+}
+sessions = {}  # balise -> {"client":…, "debut":…, "rappel":bool}
+file_attente = {}  # station -> [clients armés, pas encore partis]
+journal = []  # lignes de texte, la plus récente en tête
 
-horloge = 0.0          # secondes de flux. JAMAIS time.time() : voir LISEZ_MOI.
-signes = {}            # station -> t de son dernier message
+horloge = 0.0  # secondes de flux. JAMAIS time.time() : voir LISEZ_MOI.
+signes = {}  # station -> t de son dernier message
 
 
 # ---------------------------------------------------------------- outils
 # Ce bloc centralise les fonctions de journalisation et de calcul de durée.
 
+
 def duree_txt(s):
     s = int(s)
-    return "%d min" % (s // 60) if s < 3600 else "%d h %02d" % (s // 3600, s % 3600 // 60)
+    return (
+        "%d min" % (s // 60) if s < 3600 else "%d h %02d" % (s // 3600, s % 3600 // 60)
+    )
 
 
 def note(texte):
@@ -62,14 +72,17 @@ def sms(client, texte):
 
 def suggestion(station):
     """Quelle planche proposer : au râtelier, chez elle, la moins sortie."""
-    dispo = [b for b, p in planches.items()
-             if p["statut"] == "au râtelier" and p["ou"] == station
-             and b not in sessions]
+    dispo = [
+        b
+        for b, p in planches.items()
+        if p["statut"] == "au râtelier" and p["ou"] == station and b not in sessions
+    ]
     return min(dispo, key=lambda b: planches[b]["sorties"]) if dispo else None
 
 
 # ------------------------------------------------------------- décisions
 # Ici, on transforme les événements de stations en changements d'état du parc.
+
 
 def cloturer(balise, station, t, hors_base):
     p = planches[balise]
@@ -78,11 +91,16 @@ def cloturer(balise, station, t, hors_base):
     s = sessions.pop(balise, None)
     if s:
         duree = t - s["debut"]
-        sms(s["client"], "Merci ! %s, %s, %.2f €. Caution libérée."
-            % (balise, duree_txt(duree), duree / 60 * TARIF_MIN))
+        sms(
+            s["client"],
+            "Merci ! %s, %s, %.2f €. Caution libérée."
+            % (balise, duree_txt(duree), duree / 60 * TARIF_MIN),
+        )
     if hors_base:
-        note("RÉÉQUILIBRAGE : %s rendue en %s, sa base est %s"
-             % (balise, station, p["origine"]))
+        note(
+            "RÉÉQUILIBRAGE : %s rendue en %s, sa base est %s"
+            % (balise, station, p["origine"])
+        )
 
 
 def retards():
@@ -90,14 +108,20 @@ def retards():
     for balise, s in list(sessions.items()):
         duree = horloge - s["debut"]
         if duree > PERDUE:
-            sms(s["client"], "%s jamais rendue. Caution débitée : elle est à toi." % balise)
+            sms(
+                s["client"],
+                "%s jamais rendue. Caution débitée : elle est à toi." % balise,
+            )
             planches[balise]["statut"] = "perdue"
             note("ALERTE : %s réputée perdue" % balise)
             del sessions[balise]
         elif duree > PLAFOND and not s["rappel"]:
             s["rappel"] = True
-            sms(s["client"], "Ta session tourne depuis %s. Raccroche %s en sortant."
-                % (duree_txt(duree), balise))
+            sms(
+                s["client"],
+                "Ta session tourne depuis %s. Raccroche %s en sortant."
+                % (duree_txt(duree), balise),
+            )
 
 
 def traiter(ev):
@@ -109,7 +133,7 @@ def traiter(ev):
         note("station %s branchée" % ev.get("station"))
     signes[ev.get("station")] = ev.get("t", horloge)
 
-    if type_ == "TIC":                      # battement d'horloge de la station
+    if type_ == "TIC":  # battement d'horloge de la station
         retards()
         return
 
@@ -122,9 +146,11 @@ def traiter(ev):
         p["statut"], p["ou"] = "en mer", None
         p["sorties"] += 1
         attente = file_attente.setdefault(station, [])
-        if not attente:                     # personne n'a armé de session
+        if not attente:  # personne n'a armé de session
             p["statut"] = "sortie sans client"
-            return note("ALERTE : %s sortie de %s sans session armée" % (balise, station))
+            return note(
+                "ALERTE : %s sortie de %s sans session armée" % (balise, station)
+            )
         client = attente.pop(0)
         sessions[balise] = {"client": client, "debut": ev["t"], "rappel": False}
         note("DÉPART %s depuis %s — %s" % (balise, station, client))
@@ -145,22 +171,44 @@ PAGE = """<!doctype html><meta charset=utf-8>
 
 def tableau():
     if not signes:
-        l = ["AUCUNE STATION BRANCHÉE", "-----------------------",
-             "Le cloud n'a encore reçu aucun message. Dans un autre terminal :",
-             "",
-             "    python3 station_exemple.py --source localhost:8420",
-             "",
-             "avec le simulateur déjà lancé, ou l'adresse d'une vraie station.", ""]
+        l = [
+            "AUCUNE STATION BRANCHÉE",
+            "-----------------------",
+            "Le cloud n'a encore reçu aucun message. Dans un autre terminal :",
+            "",
+            "    python3 station_exemple.py --source localhost:8420",
+            "",
+            "avec le simulateur déjà lancé, ou l'adresse d'une vraie station.",
+            "",
+        ]
     else:
-        l = ["STATIONS", "--------"] + ["%s   dernier message à t = %.0f s" % (st, t)
-                                        for st, t in sorted(signes.items())] + [""]
+        l = (
+            ["STATIONS", "--------"]
+            + [
+                "%s   dernier message à t = %.0f s" % (st, t)
+                for st, t in sorted(signes.items())
+            ]
+            + [""]
+        )
     l += ["PARC", "----"]
     for b, p in sorted(planches.items()):
         s = sessions.get(b)
         ou = "" if p["ou"] in (None, p["origine"]) else " (en %s)" % p["ou"]
-        l.append("%-9s %-18s base %s%-6s sorties %-3d %s"
-                 % (b, p["statut"], p["origine"], ou, p["sorties"],
-                    "→ %s depuis %s" % (s["client"], duree_txt(horloge - s["debut"])) if s else ""))
+        l.append(
+            "%-9s %-18s base %s%-6s sorties %-3d %s"
+            % (
+                b,
+                p["statut"],
+                p["origine"],
+                ou,
+                p["sorties"],
+                (
+                    "→ %s depuis %s" % (s["client"], duree_txt(horloge - s["debut"]))
+                    if s
+                    else ""
+                ),
+            )
+        )
     l += ["", "JOURNAL", "-------"] + journal[:15]
     return "\n".join(l)
 
@@ -177,7 +225,9 @@ class Cloud(BaseHTTPRequestHandler):
 
     def do_POST(self):
         """Les stations poussent ici. Une ligne JSON, ou plusieurs."""
-        brut = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8")
+        brut = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode(
+            "utf-8"
+        )
         for ligne in brut.strip().splitlines():
             try:
                 traiter(json.loads(ligne))
@@ -189,12 +239,17 @@ class Cloud(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         q = parse_qs(u.query)
 
-        if u.path == "/parc":                       # l'état, en JSON
-            return self.repondre(json.dumps(
-                {"t": horloge, "planches": planches, "sessions": sessions},
-                ensure_ascii=False, indent=1), "application/json; charset=utf-8")
+        if u.path == "/parc":  # l'état, en JSON
+            return self.repondre(
+                json.dumps(
+                    {"t": horloge, "planches": planches, "sessions": sessions},
+                    ensure_ascii=False,
+                    indent=1,
+                ),
+                "application/json; charset=utf-8",
+            )
 
-        if u.path == "/arme":                       # le client arme sa session
+        if u.path == "/arme":  # le client arme sa session
             client = q.get("client", ["+33600000000"])[0].strip()
             client = client if client.startswith("+") else "+" + client
             station = q.get("station", ["A"])[0]
@@ -207,7 +262,7 @@ class Cloud(BaseHTTPRequestHandler):
 
         return self.repondre(PAGE % (horloge, tableau()), "text/html; charset=utf-8")
 
-    def log_message(self, *a):                      # silence : le journal suffit
+    def log_message(self, *a):  # silence : le journal suffit
         pass
 
 

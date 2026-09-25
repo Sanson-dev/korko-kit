@@ -36,20 +36,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # Ces valeurs modélisent la propagation radio de la station et servent à
 # générer des observations réalistes pour les tests et démos.
 
-RSSI_1M = -62.0        # puissance reçue à 1 m, balise à -19,5 dBm
-EXPOSANT = 2.6         # exposant de propagation (2 = espace libre)
-SIGMA = 3.0            # bruit gaussien, en dB
-DERIVE = 1.2           # amplitude de l'évanouissement lent, en dB
-OCCLUSION = 18.0       # atténuation d'un corps mouillé devant la balise
-ENVERS = 5.0           # atténuation d'une planche posée face contre terre
-INTERVALLE = 1.0       # intervalle d'émission, en secondes
-PLANCHER = -100.0      # en dessous, le paquet n'est pas reçu
-PERTE = 0.03           # probabilité de perte d'un paquet, à courte distance
+RSSI_1M = -62.0  # puissance reçue à 1 m, balise à -19,5 dBm
+EXPOSANT = 2.6  # exposant de propagation (2 = espace libre)
+SIGMA = 3.0  # bruit gaussien, en dB
+DERIVE = 1.2  # amplitude de l'évanouissement lent, en dB
+OCCLUSION = 18.0  # atténuation d'un corps mouillé devant la balise
+ENVERS = 5.0  # atténuation d'une planche posée face contre terre
+INTERVALLE = 1.0  # intervalle d'émission, en secondes
+PLANCHER = -100.0  # en dessous, le paquet n'est pas reçu
+PERTE = 0.03  # probabilité de perte d'un paquet, à courte distance
 
-PAS = 0.25             # granularité de la simulation, en secondes
-RACK = (1.5, 0.0)      # position du râtelier vu de la station
-SABLE = (8.0, 4.0)     # la planche posée un peu plus loin
-LARGE = (0.0, 90.0)    # au large, hors de portée
+PAS = 0.25  # granularité de la simulation, en secondes
+RACK = (1.5, 0.0)  # position du râtelier vu de la station
+SABLE = (8.0, 4.0)  # la planche posée un peu plus loin
+LARGE = (0.0, 90.0)  # au large, hors de portée
 
 PORT_FLUX = 8420
 PORT_PAGE = 8080
@@ -63,8 +63,7 @@ PLANCHES = ["korko-01", "korko-02"]
 ETRANGERES = ["korko-03", "korko-04", "korko-05", "korko-06"]
 
 #: à quelle station appartient chaque planche étrangère
-ORIGINES = {"korko-03": "B", "korko-04": "B",
-            "korko-05": "C", "korko-06": "C"}
+ORIGINES = {"korko-03": "B", "korko-04": "B", "korko-05": "C", "korko-06": "C"}
 
 
 # --------------------------------------------------------------------------
@@ -72,7 +71,10 @@ ORIGINES = {"korko-03": "B", "korko-04": "B",
 # --------------------------------------------------------------------------
 # Un objet Balise décrit un point de l'espace et sa manière de générer un RSSI.
 
+
 class Balise:
+    """Modélise la position et les perturbations radio d’une planche."""
+
     def __init__(self, ident, x=RACK[0], y=RACK[1], origine="A"):
         self.id = ident
         self.origine = origine
@@ -137,50 +139,80 @@ class Balise:
 # --------------------------------------------------------------------------
 # Le simulateur pilote des balises et produit un flux de mesures sur la station A.
 
+
 class Simulateur:
+    """Produit un flux reproductible en mode manuel, scénario ou rejeu."""
 
     SCENARIOS = {
-        "depart": ("Un départ franc, puis rien", 420, [
-            (60, "partir", "korko-01"),
-        ]),
-        "sable": ("La planche posée sur le sable — aucun départ", 420, [
-            (60, "poser", "korko-01"),
-            (240, "ranger", "korko-01"),
-        ]),
-        "corps": ("Un corps mouillé devant la balise — aucun départ", 300, [
-            (60, "corps", "korko-02"),
-            (140, "corps", "korko-02"),
-        ]),
-        "morte": ("Une balise qui faiblit puis se tait", 600, [
-            (150, "mourante", "korko-02"),
-            (330, "tuer", "korko-02"),
-        ]),
-        "foule": ("Deux départs rapprochés, deux retours", 900, [
-            (60, "partir", "korko-01"),
-            (75, "partir", "korko-02"),
-            (600, "revenir", "korko-01"),
-            (700, "revenir", "korko-02"),
-        ]),
-        "etrangere": ("Une planche de la station B rapportée ici", 700, [
-            (60, "partir", "korko-01"),
-            (180, "arrive", "korko-03"),
-            (400, "revenir", "korko-01"),
-            (560, "sen_va", "korko-03"),
-        ]),
-        "journee": ("Une matinée complète, avec tous les pièges", 2400, [
-            (120, "partir", "korko-01"),
-            (200, "poser", "korko-02"),
-            (420, "ranger", "korko-02"),
-            (500, "corps", "korko-02"),
-            (580, "corps", "korko-02"),
-            (700, "envers", "korko-02"),
-            (900, "revenir", "korko-01"),
-            (1100, "partir", "korko-02"),
-            (1500, "arrive", "korko-04"),
-            (1700, "revenir", "korko-02"),
-            (1900, "sen_va", "korko-04"),
-            (2100, "mourante", "korko-01"),
-        ]),
+        "depart": (
+            "Un départ franc, puis rien",
+            420,
+            [
+                (60, "partir", "korko-01"),
+            ],
+        ),
+        "sable": (
+            "La planche posée sur le sable — aucun départ",
+            420,
+            [
+                (60, "poser", "korko-01"),
+                (240, "ranger", "korko-01"),
+            ],
+        ),
+        "corps": (
+            "Un corps mouillé devant la balise — aucun départ",
+            300,
+            [
+                (60, "corps", "korko-02"),
+                (140, "corps", "korko-02"),
+            ],
+        ),
+        "morte": (
+            "Une balise qui faiblit puis se tait",
+            600,
+            [
+                (150, "mourante", "korko-02"),
+                (330, "tuer", "korko-02"),
+            ],
+        ),
+        "foule": (
+            "Deux départs rapprochés, deux retours",
+            900,
+            [
+                (60, "partir", "korko-01"),
+                (75, "partir", "korko-02"),
+                (600, "revenir", "korko-01"),
+                (700, "revenir", "korko-02"),
+            ],
+        ),
+        "etrangere": (
+            "Une planche de la station B rapportée ici",
+            700,
+            [
+                (60, "partir", "korko-01"),
+                (180, "arrive", "korko-03"),
+                (400, "revenir", "korko-01"),
+                (560, "sen_va", "korko-03"),
+            ],
+        ),
+        "journee": (
+            "Une matinée complète, avec tous les pièges",
+            2400,
+            [
+                (120, "partir", "korko-01"),
+                (200, "poser", "korko-02"),
+                (420, "ranger", "korko-02"),
+                (500, "corps", "korko-02"),
+                (580, "corps", "korko-02"),
+                (700, "envers", "korko-02"),
+                (900, "revenir", "korko-01"),
+                (1100, "partir", "korko-02"),
+                (1500, "arrive", "korko-04"),
+                (1700, "revenir", "korko-02"),
+                (1900, "sen_va", "korko-04"),
+                (2100, "mourante", "korko-01"),
+            ],
+        ),
     }
 
     def __init__(self, graine=7, chaos=False, station="A"):
@@ -216,8 +248,12 @@ class Simulateur:
         self.rejeu_i = 0
         self.balises = {}
         for nom in PLANCHES:
-            b = Balise(nom, RACK[0] + self.alea.uniform(-0.4, 0.4),
-                       RACK[1] + self.alea.uniform(-0.5, 0.5), origine="A")
+            b = Balise(
+                nom,
+                RACK[0] + self.alea.uniform(-0.4, 0.4),
+                RACK[1] + self.alea.uniform(-0.5, 0.5),
+                origine="A",
+            )
             b.prochaine = self.alea.uniform(0, INTERVALLE)
             self.balises[nom] = b
         for nom in ETRANGERES:
@@ -239,8 +275,10 @@ class Simulateur:
 
     def charger_scenario(self, nom):
         if nom not in self.SCENARIOS:
-            raise SystemExit("scénario inconnu : %s\ndisponibles : %s"
-                             % (nom, ", ".join(self.SCENARIOS)))
+            raise SystemExit(
+                "scénario inconnu : %s\ndisponibles : %s"
+                % (nom, ", ".join(self.SCENARIOS))
+            )
         titre, duree, script = self.SCENARIOS[nom]
         self.reinitialiser()
         self.mode = "scenario"
@@ -304,15 +342,16 @@ class Simulateur:
                 d = dict(o)
                 d["t"] = round(d["t"] - t0, 3)
                 f.write(json.dumps(d) + "\n")
-        verite = [dict(v, t=round(v["t"] - t0, 2))
-                  for v in self.verite if v["t"] >= t0]
+        verite = [dict(v, t=round(v["t"] - t0, 2)) for v in self.verite if v["t"] >= t0]
         with open(base + ".verite.json", "w", encoding="utf-8") as f:
             json.dump(verite, f, ensure_ascii=False, indent=1)
 
-        infos = {"fichier": os.path.basename(base) + ".ndjson",
-                 "observations": len(self.enr["obs"]),
-                 "verites": len(verite),
-                 "duree": round(self.t - t0, 1)}
+        infos = {
+            "fichier": os.path.basename(base) + ".ndjson",
+            "observations": len(self.enr["obs"]),
+            "verites": len(verite),
+            "duree": round(self.t - t0, 1),
+        }
         self.enr = None
         return infos
 
@@ -342,11 +381,18 @@ class Simulateur:
                         nv = len(json.load(fh))
                 except ValueError:
                     nv = 0
-            traces.append({"fichier": f, "observations": n,
-                           "duree": round(dernier), "balises": len(balises),
-                           "verites": nv})
-        scenarios = [{"id": k, "titre": v[0], "duree": v[1]}
-                     for k, v in self.SCENARIOS.items()]
+            traces.append(
+                {
+                    "fichier": f,
+                    "observations": n,
+                    "duree": round(dernier),
+                    "balises": len(balises),
+                    "verites": nv,
+                }
+            )
+        scenarios = [
+            {"id": k, "titre": v[0], "duree": v[1]} for k, v in self.SCENARIOS.items()
+        ]
         return {"scenarios": scenarios, "traces": traces, "dossier": DOSSIER}
 
     # -- commandes ---------------------------------------------------------
@@ -414,18 +460,27 @@ class Simulateur:
             globals()[valeur["nom"]] = float(valeur["valeur"])
 
     def _verite(self, balise, evenement):
-        self.verite.append({"t": round(self.t, 2), "station": self.station,
-                            "balise": balise, "evenement": evenement})
+        self.verite.append(
+            {
+                "t": round(self.t, 2),
+                "station": self.station,
+                "balise": balise,
+                "evenement": evenement,
+            }
+        )
 
     # -- avancement --------------------------------------------------------
 
     def pas(self):
+        """Avance d’un pas simulé et produit les observations devenues disponibles."""
         self.t += PAS
         obs = []
 
         if self.mode == "rejeu":
-            while self.rejeu_i < len(self.rejeu) and \
-                    self.rejeu[self.rejeu_i]["t"] <= self.t:
+            while (
+                self.rejeu_i < len(self.rejeu)
+                and self.rejeu[self.rejeu_i]["t"] <= self.t
+            ):
                 o = self.rejeu[self.rejeu_i]
                 self.rejeu_i += 1
                 obs.append(o)
@@ -458,11 +513,20 @@ class Simulateur:
                     if r is not None:
                         b.dernier_rssi = r
                         b.dernier_vu = self.t
-                        obs.append({"t": round(self.t, 3),
-                                    "station": self.station,
-                                    "balise": b.id, "rssi": r})
-            if self.mode == "scenario" and self.duree and \
-                    self.t >= self.duree and not self.script:
+                        obs.append(
+                            {
+                                "t": round(self.t, 3),
+                                "station": self.station,
+                                "balise": b.id,
+                                "rssi": r,
+                            }
+                        )
+            if (
+                self.mode == "scenario"
+                and self.duree
+                and self.t >= self.duree
+                and not self.script
+            ):
                 self.termine = True
                 self.en_pause = True
 
@@ -483,6 +547,7 @@ class Simulateur:
     def flux(self, duree=None):
         """Générateur utilisé par korko.lancer(--sim). Aussi vite que possible."""
         from korko import Observation
+
         fin = duree if duree is not None else self.duree_prevue
         while self.t < fin:
             for o in self.pas():
@@ -503,20 +568,30 @@ class Simulateur:
             "vitesse": self.vitesse,
             "enregistre": self.enr["nom"] if self.enr else None,
             "verites": len(self.verite),
-            "reglages": {"RSSI_1M": RSSI_1M, "EXPOSANT": EXPOSANT,
-                         "SIGMA": SIGMA, "PERTE": PERTE},
-            "balises": [{
-                "id": b.id,
-                "origine": b.origine,
-                "rssi": b.dernier_rssi,
-                "muet": (b.dernier_vu is None or self.t - b.dernier_vu > 20)
-                        if rejeu else (not b.vivante),
-                "distance": None if rejeu else round(b.distance, 1),
-                "lieu": "—" if rejeu else b.lieu,
-                "occlusion": b.occlusion,
-                "envers": b.envers,
-                "muette": not b.vivante,
-            } for b in self.balises.values()],
+            "reglages": {
+                "RSSI_1M": RSSI_1M,
+                "EXPOSANT": EXPOSANT,
+                "SIGMA": SIGMA,
+                "PERTE": PERTE,
+            },
+            "balises": [
+                {
+                    "id": b.id,
+                    "origine": b.origine,
+                    "rssi": b.dernier_rssi,
+                    "muet": (
+                        (b.dernier_vu is None or self.t - b.dernier_vu > 20)
+                        if rejeu
+                        else (not b.vivante)
+                    ),
+                    "distance": None if rejeu else round(b.distance, 1),
+                    "lieu": "—" if rejeu else b.lieu,
+                    "occlusion": b.occlusion,
+                    "envers": b.envers,
+                    "muette": not b.vivante,
+                }
+                for b in self.balises.values()
+            ],
         }
 
 
@@ -524,7 +599,10 @@ class Simulateur:
 # Le serveur de flux (le même contrat que le Pi)
 # --------------------------------------------------------------------------
 
+
 class Diffuseur:
+    """Diffuse observations et horloge aux détecteurs connectés en TCP."""
+
     def __init__(self, port=PORT_FLUX):
         self.clients = []
         self.verrou = threading.Lock()
@@ -541,6 +619,7 @@ class Diffuseur:
                 c, _ = s.accept()
                 with self.verrou:
                     self.clients.append(c)
+
         threading.Thread(target=boucle, daemon=True).start()
 
     def envoyer(self, obs):
@@ -567,8 +646,10 @@ class Diffuseur:
         if getattr(self, "_seconde", None) == seconde:
             return
         self._seconde = seconde
-        blob = (json.dumps({"t": round(t, 3), "station": station,
-                            "evenement": "TIC"}) + "\n").encode()
+        blob = (
+            json.dumps({"t": round(t, 3), "station": station, "evenement": "TIC"})
+            + "\n"
+        ).encode()
         with self.verrou:
             morts = []
             for c in self.clients:
@@ -586,8 +667,10 @@ class Diffuseur:
     def reinitialiser_flux(self, t, station="A"):
         """Marque un changement de scène pour les lecteurs du flux TCP."""
         self._seconde = int(t) - 1
-        blob = (json.dumps({"t": round(t, 3), "station": station,
-                            "evenement": "RESET"}) + "\n").encode()
+        blob = (
+            json.dumps({"t": round(t, 3), "station": station, "evenement": "RESET"})
+            + "\n"
+        ).encode()
         with self.verrou:
             morts = []
             for c in self.clients:
@@ -615,76 +698,376 @@ class Diffuseur:
 PAGE = r"""<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>KORKO — simulateur de station</title><style>
-:root{color-scheme:light dark;--bg:#E9EEE8;--sf:#F8FAF5;--ink:#08211F;
---soft:#37524E;--rule:#BCCAC0;--teal:#0E5852;--sig:#E9A800;--dgr:#96311A}
-@media(prefers-color-scheme:dark){:root{--bg:#0B1615;--sf:#152322;--ink:#E6EDE5;
---soft:#A5B9B3;--rule:#2D403D;--teal:#6FC4BA;--sig:#F5C13B;--dgr:#E68062}}
-*{box-sizing:border-box}
-body{margin:0 auto;max-width:1120px;background:var(--bg);color:var(--ink);
-font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;padding:16px}
-h1{font-size:17px;margin:0 0 2px}
-h2{font-size:13px;color:var(--teal);margin:24px 0 8px;font-weight:600}
-.sub{color:var(--soft);font-size:13px;margin:0 0 14px}
-button{font:inherit;font-size:13px;padding:5px 10px;background:var(--sf);
-color:var(--ink);border:1px solid var(--rule);cursor:pointer}
-button:hover:not(:disabled){border-color:var(--teal)}
-button:disabled{opacity:.4;cursor:not-allowed}
-button.on{background:var(--sig);border-color:var(--sig);color:#3a2c00}
-button.pr{background:var(--teal);border-color:var(--teal);color:var(--sf)}
-input{font:inherit;font-size:13px;padding:4px 6px;background:var(--sf);
-color:var(--ink);border:1px solid var(--rule)}
-.ong{display:flex;border-bottom:1px solid var(--rule);margin-top:6px}
-.ong button{border:1px solid transparent;border-bottom:none;background:none;
-padding:9px 16px;font-size:14px;color:var(--soft);margin-bottom:-1px}
-.ong button.act{background:var(--sf);border-color:var(--rule);
-border-bottom:1px solid var(--sf);color:var(--ink);font-weight:600}
-.pan{background:var(--sf);border:1px solid var(--rule);border-top:none;
-padding:14px 16px}
-.pan p{margin:0 0 10px;font-size:13px;color:var(--soft)}
-.pan p b{color:var(--ink)}
-.bar{display:flex;gap:16px;align-items:center;flex-wrap:wrap;
-background:var(--sf);border:1px solid var(--rule);padding:9px 14px;margin-top:14px}
-.t{font-variant-numeric:tabular-nums;font-size:19px;font-weight:600}
-.etq{font-size:12px;color:var(--soft)}.etq b{color:var(--ink);font-weight:600}
-.rg{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--soft)}
-.prog{height:4px;background:var(--rule)}
-.prog i{display:block;height:100%;background:var(--teal)}
-.lst{width:100%;border-collapse:collapse;font-size:13px}
-.lst td{padding:7px 8px;border-bottom:1px solid var(--rule);vertical-align:middle}
-.lst tr:last-child td{border-bottom:none}
-.lst .nom{font-weight:600;color:var(--ink)}
-.lst .meta{color:var(--soft);font-size:12px}
-.lst td:last-child{text-align:right;white-space:nowrap}
-.vide{color:var(--soft);font-size:13px;font-style:italic}
-.note{margin:10px 0 0;font-size:13px;color:var(--soft);background:var(--sf);
-border:1px solid var(--rule);border-left:3px solid var(--sig);padding:9px 13px}
-.tag{display:inline-block;font-size:10px;font-weight:400;padding:1px 6px;
-margin-left:7px;border:1px solid var(--rule);color:var(--soft);border-radius:2px}
-.badge{display:inline-block;font-size:11px;padding:2px 7px;margin-right:5px;
-background:var(--sig);color:#3a2c00;border-radius:2px}
-.rien{color:var(--soft)}
-table.pl{width:100%;border-collapse:collapse;margin-top:8px}
-.pl th{text-align:left;font-size:11px;color:var(--teal);font-weight:600;
-padding:4px 6px;border-bottom:1px solid var(--teal)}
-.pl td{padding:5px 6px;border-bottom:1px solid var(--rule);vertical-align:middle}
-.pl td button{margin:2px 4px 2px 0}
-.id{font-weight:600}
-.n{font-variant-numeric:tabular-nums;text-align:right;width:72px}
-.faible{color:var(--dgr)}.muet{color:var(--soft);font-style:italic}
-.lieu{color:var(--soft);font-size:13px;white-space:nowrap}
-button.bsc i{display:inline-block;width:8px;height:8px;border-radius:50%;
-margin-right:6px;background:var(--rule);border:1px solid var(--soft)}
-button.bsc.on i{background:#c0392b;border-color:#8e2b20}
-canvas{width:100%;height:132px;border:1px solid var(--rule);background:var(--sf);
-margin-top:8px}
-.leg{margin-top:12px;font-size:13px;color:var(--soft);background:var(--sf);
-border:1px solid var(--rule);padding:12px 16px}
-.leg b{color:var(--ink)}.leg p{margin:0 0 6px}
-.leg ul{margin:0 0 12px;padding-left:18px}.leg li{margin-bottom:3px}
-.leg ul:last-child{margin-bottom:0}
-.pied{margin-top:22px;font-size:12px;color:var(--soft);
-border-top:1px solid var(--rule);padding-top:10px}
-code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+:root {
+  color-scheme: light dark;
+  --bg: #E9EEE8;
+  --sf: #F8FAF5;
+  --ink: #08211F;
+  --soft: #37524E;
+  --rule: #BCCAC0;
+  --teal: #0E5852;
+  --sig: #E9A800;
+  --dgr: #96311A
+}
+
+@media(prefers-color-scheme:dark) {
+  :root {
+    --bg: #0B1615;
+    --sf: #152322;
+    --ink: #E6EDE5;
+    --soft: #A5B9B3;
+    --rule: #2D403D;
+    --teal: #6FC4BA;
+    --sig: #F5C13B;
+    --dgr: #E68062
+  }
+}
+
+* {
+  box-sizing: border-box
+}
+
+body {
+  margin: 0 auto;
+  max-width: 1120px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif;
+  padding: 16px
+}
+
+h1 {
+  font-size: 17px;
+  margin: 0 0 2px
+}
+
+h2 {
+  font-size: 13px;
+  color: var(--teal);
+  margin: 24px 0 8px;
+  font-weight: 600
+}
+
+.sub {
+  color: var(--soft);
+  font-size: 13px;
+  margin: 0 0 14px
+}
+
+button {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 10px;
+  background: var(--sf);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  cursor: pointer
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--teal)
+}
+
+button:disabled {
+  opacity: .4;
+  cursor: not-allowed
+}
+
+button.on {
+  background: var(--sig);
+  border-color: var(--sig);
+  color: #3a2c00
+}
+
+button.pr {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: var(--sf)
+}
+
+input {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+  background: var(--sf);
+  color: var(--ink);
+  border: 1px solid var(--rule)
+}
+
+.ong {
+  display: flex;
+  border-bottom: 1px solid var(--rule);
+  margin-top: 6px
+}
+
+.ong button {
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: none;
+  padding: 9px 16px;
+  font-size: 14px;
+  color: var(--soft);
+  margin-bottom: -1px
+}
+
+.ong button.act {
+  background: var(--sf);
+  border-color: var(--rule);
+  border-bottom: 1px solid var(--sf);
+  color: var(--ink);
+  font-weight: 600
+}
+
+.pan {
+  background: var(--sf);
+  border: 1px solid var(--rule);
+  border-top: none;
+  padding: 14px 16px
+}
+
+.pan p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--soft)
+}
+
+.pan p b {
+  color: var(--ink)
+}
+
+.bar {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--sf);
+  border: 1px solid var(--rule);
+  padding: 9px 14px;
+  margin-top: 14px
+}
+
+.t {
+  font-variant-numeric: tabular-nums;
+  font-size: 19px;
+  font-weight: 600
+}
+
+.etq {
+  font-size: 12px;
+  color: var(--soft)
+}
+
+.etq b {
+  color: var(--ink);
+  font-weight: 600
+}
+
+.rg {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--soft)
+}
+
+.prog {
+  height: 4px;
+  background: var(--rule)
+}
+
+.prog i {
+  display: block;
+  height: 100%;
+  background: var(--teal)
+}
+
+.lst {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px
+}
+
+.lst td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: middle
+}
+
+.lst tr:last-child td {
+  border-bottom: none
+}
+
+.lst .nom {
+  font-weight: 600;
+  color: var(--ink)
+}
+
+.lst .meta {
+  color: var(--soft);
+  font-size: 12px
+}
+
+.lst td:last-child {
+  text-align: right;
+  white-space: nowrap
+}
+
+.vide {
+  color: var(--soft);
+  font-size: 13px;
+  font-style: italic
+}
+
+.note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--soft);
+  background: var(--sf);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--sig);
+  padding: 9px 13px
+}
+
+.tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 400;
+  padding: 1px 6px;
+  margin-left: 7px;
+  border: 1px solid var(--rule);
+  color: var(--soft);
+  border-radius: 2px
+}
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 7px;
+  margin-right: 5px;
+  background: var(--sig);
+  color: #3a2c00;
+  border-radius: 2px
+}
+
+.rien {
+  color: var(--soft)
+}
+
+table.pl {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px
+}
+
+.pl th {
+  text-align: left;
+  font-size: 11px;
+  color: var(--teal);
+  font-weight: 600;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--teal)
+}
+
+.pl td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: middle
+}
+
+.pl td button {
+  margin: 2px 4px 2px 0
+}
+
+.id {
+  font-weight: 600
+}
+
+.n {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  width: 72px
+}
+
+.faible {
+  color: var(--dgr)
+}
+
+.muet {
+  color: var(--soft);
+  font-style: italic
+}
+
+.lieu {
+  color: var(--soft);
+  font-size: 13px;
+  white-space: nowrap
+}
+
+button.bsc i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--rule);
+  border: 1px solid var(--soft)
+}
+
+button.bsc.on i {
+  background: #c0392b;
+  border-color: #8e2b20
+}
+
+canvas {
+  width: 100%;
+  height: 132px;
+  border: 1px solid var(--rule);
+  background: var(--sf);
+  margin-top: 8px
+}
+
+.leg {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--soft);
+  background: var(--sf);
+  border: 1px solid var(--rule);
+  padding: 12px 16px
+}
+
+.leg b {
+  color: var(--ink)
+}
+
+.leg p {
+  margin: 0 0 6px
+}
+
+.leg ul {
+  margin: 0 0 12px;
+  padding-left: 18px
+}
+
+.leg li {
+  margin-bottom: 3px
+}
+
+.leg ul:last-child {
+  margin-bottom: 0
+}
+
+.pied {
+  margin-top: 22px;
+  font-size: 12px;
+  color: var(--soft);
+  border-top: 1px solid var(--rule);
+  padding-top: 10px
+}
+
+code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px
+}
 </style></head><body>
 
 <h1>Simulateur de station KORKO</h1>
@@ -797,237 +1180,407 @@ Puissance reçue à 1 m : <span id="a1m"></span> dBm — à corriger dans
 <code>korko_sim.py</code> après mesure sur le râtelier.</p>
 
 <script>
-const COUL=["#0E5852","#B8823A","#96311A","#3C817B","#6a4fb5","#4d7d1f"];
-const hist={};let idx={},btns={},modeVu=null,nbVu=-1;
-const ETRANGER=[
- ["arrive","Arrive ici","Quelqu'un rapporte cette planche au mauvais râtelier. Inscrit une ETRANGERE à son arrivée."],
- ["sen_va","Repart chez elle","Elle quitte cette station et rentre à la sienne."]];
-const DEPLACE=[
- ["partir","Part surfer","Quitte le râtelier et s'en va au large. Inscrit un DEPART dans la vérité terrain."],
- ["revenir","Revient","Revient vers le râtelier. Le RETOUR est inscrit à l'arrivée."],
- ["poser","Sur le sable","Posée à neuf mètres et y reste. Aucun événement : c'est le piège."],
- ["ranger","Au râtelier","Raccrochée, sans rien inscrire. Remet la scène en ordre."]];
-const BASCULE=[
- ["corps","Corps devant","occlusion","Interrupteur. Un corps mouillé devant la balise : environ 18 dB en moins."],
- ["envers","Planche à l'envers","envers","Interrupteur. Face contre terre : environ 5 dB en moins."],
- ["muette","Planche muette","muette","Interrupteur. La balise n'émet plus rien du tout."]];
+const COUL = ["#0E5852", "#B8823A", "#96311A", "#3C817B", "#6a4fb5", "#4d7d1f"];
+const hist = {};
+let idx = {},
+  btns = {},
+  modeVu = null,
+  nbVu = -1;
+const ETRANGER = [
+  ["arrive", "Arrive ici",
+    "Quelqu'un rapporte cette planche au mauvais râtelier. Inscrit une ETRANGERE à son arrivée."
+  ],
+  ["sen_va", "Repart chez elle", "Elle quitte cette station et rentre à la sienne."]
+];
+const DEPLACE = [
+  ["partir", "Part surfer",
+    "Quitte le râtelier et s'en va au large. Inscrit un DEPART dans la vérité terrain."
+  ],
+  ["revenir", "Revient", "Revient vers le râtelier. Le RETOUR est inscrit à l'arrivée."],
+  ["poser", "Sur le sable", "Posée à neuf mètres et y reste. Aucun événement : c'est le piège."],
+  ["ranger", "Au râtelier", "Raccrochée, sans rien inscrire. Remet la scène en ordre."]
+];
+const BASCULE = [
+  ["corps", "Corps devant", "occlusion",
+    "Interrupteur. Un corps mouillé devant la balise : environ 18 dB en moins."
+  ],
+  ["envers", "Planche à l'envers", "envers",
+    "Interrupteur. Face contre terre : environ 5 dB en moins."
+  ],
+  ["muette", "Planche muette", "muette", "Interrupteur. La balise n'émet plus rien du tout."]
+];
 
-function q(a,b,c){return fetch("/cmd",{method:"POST",
-  body:JSON.stringify({action:a,balise:b,valeur:c})});}
-function vider(){for(const k in hist)delete hist[k];}
-
-const ONG={manuel:["o-manuel","p-manuel"],scen:["o-scen","p-scen"],
-           trac:["o-trac","p-trac"]};
-function onglet(n){for(const k in ONG){
-  document.getElementById(ONG[k][0]).classList.toggle("act",k===n);
-  document.getElementById(ONG[k][1]).hidden=(k!==n);}}
-for(const k in ONG)document.getElementById(ONG[k][0]).onclick=()=>{
-  onglet(k);if(k!=="manuel")bibliotheque();};
-
-function ligne(nom,meta,libelle,fn){
-  const tr=document.createElement("tr"),a=document.createElement("td"),
-        b=document.createElement("td");
-  a.innerHTML='<div class="nom"></div><div class="meta"></div>';
-  a.children[0].textContent=nom;a.children[1].textContent=meta;
-  const bt=document.createElement("button");bt.className="pr";
-  bt.textContent=libelle;bt.onclick=fn;b.appendChild(bt);
-  tr.appendChild(a);tr.appendChild(b);return tr;
-}
-function bibliotheque(){
-  fetch("/bibliotheque").then(r=>r.json()).then(d=>{
-    document.getElementById("dos").textContent=d.dossier;
-    const s=document.getElementById("l-scen");s.innerHTML="";
-    d.scenarios.forEach(x=>s.appendChild(ligne(x.titre,
-      x.id+" · "+Math.round(x.duree/60)+" min simulées",
-      "Jouer",()=>{vider();q("scenario",null,x.id);})));
-    const t=document.getElementById("l-trac");t.innerHTML="";
-    if(!d.traces.length){
-      const tr=document.createElement("tr");
-      tr.innerHTML='<td class="vide">Aucune trace pour le moment. Lancez un '+
-        'enregistrement depuis la barre ci-dessous, puis revenez ici.</td>';
-      t.appendChild(tr);return;}
-    d.traces.forEach(x=>t.appendChild(ligne(x.fichier,
-      x.observations+" observations · "+x.duree+" s · "+x.balises+" balises · "+
-      (x.verites?x.verites+" événements de vérité":"pas de vérité terrain"),
-      "Rejouer",()=>{vider();q("trace",null,x.fichier);})));
+function q(a, b, c) {
+  return fetch("/cmd", {
+    method: "POST",
+    body: JSON.stringify({
+      action: a,
+      balise: b,
+      valeur: c
+    })
   });
 }
-document.getElementById("rafraichir").onclick=bibliotheque;
-document.getElementById("reprendre").onclick=()=>{vider();q("manuel");};
-document.getElementById("recom").onclick=()=>{vider();q("recommencer");};
-document.getElementById("pause").onclick=()=>q("pause");
-const vit=document.getElementById("vit");
-vit.oninput=()=>{document.getElementById("vitv").textContent=vit.value+"x";
-  q("vitesse",null,vit.value);};
 
-document.getElementById("rec").onclick=()=>{
-  const b=document.getElementById("rec");
-  if(b.classList.contains("on")){
-    fetch("/enregistrement",{method:"POST",body:JSON.stringify({action:"stop"})})
-      .then(r=>r.json()).then(i=>{
-        if(i.fichier)alert("Enregistré : "+i.fichier+"\n"+i.observations+
-          " observations, "+i.verites+" événements de vérité, "+i.duree+" s.");
-        bibliotheque();});
-  }else{
-    fetch("/enregistrement",{method:"POST",body:JSON.stringify(
-      {action:"start",nom:document.getElementById("nom").value})});
-  }};
-
-for(const n of ["SIGMA","EXPOSANT","PERTE"]){
-  const el=document.getElementById(n);
-  el.oninput=()=>{document.getElementById(n+"v").textContent=el.value;
-    q("reglage",null,{nom:n,valeur:el.value});};
+function vider() {
+  for (const k in hist)
+    delete hist[k];
 }
 
-const es=new EventSource("/flux");
-let dernierT=0,derniereScene=null;
-es.onmessage=m=>{
-  const d=JSON.parse(m.data);
+const ONG = {
+  manuel: ["o-manuel", "p-manuel"],
+  scen: ["o-scen", "p-scen"],
+  trac: ["o-trac", "p-trac"]
+};
+
+function onglet(n) {
+  for (const k in ONG) {
+    document.getElementById(ONG[k][0]).classList.toggle("act", k === n);
+    document.getElementById(ONG[k][1]).hidden = (k !== n);
+  }
+}
+for (const k in ONG)
+  document.getElementById(ONG[k][0]).onclick = () => {
+    onglet(k);
+    if (k !== "manuel")
+      bibliotheque();
+  };
+
+function ligne(nom, meta, libelle, fn) {
+  const tr = document.createElement("tr"),
+    a = document.createElement("td"),
+    b = document.createElement("td");
+  a.innerHTML = '<div class="nom"></div><div class="meta"></div>';
+  a.children[0].textContent = nom;
+  a.children[1].textContent = meta;
+  const bt = document.createElement("button");
+  bt.className = "pr";
+  bt.textContent = libelle;
+  bt.onclick = fn;
+  b.appendChild(bt);
+  tr.appendChild(a);
+  tr.appendChild(b);
+  return tr;
+}
+
+function bibliotheque() {
+  fetch("/bibliotheque").then(r => r.json()).then(d => {
+    document.getElementById("dos").textContent = d.dossier;
+    const s = document.getElementById("l-scen");
+    s.innerHTML = "";
+    d.scenarios.forEach(x => s.appendChild(ligne(x.titre,
+      x.id + " · " + Math.round(x.duree / 60) + " min simulées",
+      "Jouer", () => {
+        vider();
+        q("scenario", null, x.id);
+      })));
+    const t = document.getElementById("l-trac");
+    t.innerHTML = "";
+    if (!d.traces.length) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = '<td class="vide">Aucune trace pour le moment. Lancez un ' +
+        'enregistrement depuis la barre ci-dessous, puis revenez ici.</td>';
+      t.appendChild(tr);
+      return;
+    }
+    d.traces.forEach(x => t.appendChild(ligne(x.fichier,
+      x.observations + " observations · " + x.duree + " s · " + x.balises +
+      " balises · " +
+      (x.verites ? x.verites + " événements de vérité" : "pas de vérité terrain"),
+      "Rejouer", () => {
+        vider();
+        q("trace", null, x.fichier);
+      })));
+  });
+}
+document.getElementById("rafraichir").onclick = bibliotheque;
+document.getElementById("reprendre").onclick = () => {
+  vider();
+  q("manuel");
+};
+document.getElementById("recom").onclick = () => {
+  vider();
+  q("recommencer");
+};
+document.getElementById("pause").onclick = () => q("pause");
+const vit = document.getElementById("vit");
+vit.oninput = () => {
+  document.getElementById("vitv").textContent = vit.value + "x";
+  q("vitesse", null, vit.value);
+};
+
+document.getElementById("rec").onclick = () => {
+  const b = document.getElementById("rec");
+  if (b.classList.contains("on")) {
+    fetch("/enregistrement", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "stop"
+        })
+      })
+      .then(r => r.json()).then(i => {
+        if (i.fichier)
+          alert("Enregistré : " + i.fichier + "\n" + i.observations +
+            " observations, " + i.verites + " événements de vérité, " + i.duree + " s.");
+        bibliotheque();
+      });
+  } else {
+    fetch("/enregistrement", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "start",
+        nom: document.getElementById("nom").value
+      })
+    });
+  }
+};
+
+for (const n of ["SIGMA", "EXPOSANT", "PERTE"]) {
+  const el = document.getElementById(n);
+  el.oninput = () => {
+    document.getElementById(n + "v").textContent = el.value;
+    q("reglage", null, {
+      nom: n,
+      valeur: el.value
+    });
+  };
+}
+
+const es = new EventSource("/flux");
+let dernierT = 0,
+  derniereScene = null;
+es.onmessage = m => {
+  const d = JSON.parse(m.data);
   // changement de scène : l'historique affiché ne correspond plus à rien.
   // On compare la scène elle-même, et pas seulement le temps : à vitesse
   // élevée, deux images se suivent de plusieurs dizaines de secondes.
-  const scene=d.etat.mode+"/"+d.etat.source;
-  if(scene!==derniereScene||d.etat.t<dernierT-1)vider();
-  derniereScene=scene;
-  dernierT=d.etat.t;
-  for(const o of d.obs){
-    if(o.t>d.etat.t+1)continue;      // reliquat de la scène précédente
-    (hist[o.balise]=hist[o.balise]||[]).push([o.t,o.rssi]);
-    if(hist[o.balise].length>900)hist[o.balise].shift();}
-  maj(d.etat);dessiner(d.etat.t);
+  const scene = d.etat.mode + "/" + d.etat.source;
+  if (scene !== derniereScene || d.etat.t < dernierT - 1)
+    vider();
+  derniereScene = scene;
+  dernierT = d.etat.t;
+  for (const o of d.obs) {
+    if (o.t > d.etat.t + 1)
+      continue; // reliquat de la scène précédente
+    (hist[o.balise] = hist[o.balise] || []).push([o.t, o.rssi]);
+    if (hist[o.balise].length > 900)
+      hist[o.balise].shift();
+  }
+  maj(d.etat);
+  dessiner(d.etat.t);
 };
 
-function maj(e){
-  document.getElementById("temps").textContent=Math.round(e.t)+" s";
-  document.getElementById("cl").textContent=e.clients+" client(s) branché(s).";
-  document.getElementById("e-mode").textContent=
-    {manuel:"manuel",scenario:"scénario",rejeu:"rejeu"}[e.mode];
-  document.getElementById("e-titre").textContent=
-    e.titre+(e.termine?" — terminé":"")+" · "+e.verites+" événements de vérité";
-  document.getElementById("prog").style.width=
-    e.duree?Math.min(100,100*e.t/e.duree)+"%":"0";
-  const p=document.getElementById("pause");
-  p.classList.toggle("on",e.pause);p.textContent=e.pause?"Reprendre":"Pause";
-  const r=document.getElementById("rec");
-  r.classList.toggle("on",!!e.enregistre);
-  r.textContent=e.enregistre?"Arrêter l'enregistrement":"Enregistrer";
-  document.getElementById("nom").disabled=!!e.enregistre;
-  document.getElementById("a1m").textContent=e.reglages.RSSI_1M;
-  for(const n of ["SIGMA","EXPOSANT","PERTE"]){
-    const el=document.getElementById(n);
-    if(document.activeElement!==el){el.value=e.reglages[n];
-      document.getElementById(n+"v").textContent=e.reglages[n];}}
-  document.getElementById("norg").hidden=(e.mode!=="rejeu");
-  if(modeVu!==e.mode||nbVu!==e.balises.length){
-    modeVu=e.mode;nbVu=e.balises.length;construire(e);}
-  for(const b of e.balises){
-    const rs=document.getElementById("r_"+b.id),
-          ds=document.getElementById("d_"+b.id),
-          ls=document.getElementById("l_"+b.id),
-          es_=document.getElementById("e_"+b.id);
-    if(!rs)continue;
-    if(b.muet){rs.textContent="silence";rs.className="n muet";}
-    else if(b.rssi===null){rs.textContent="—";rs.className="n muet";}
-    else{rs.textContent=b.rssi;rs.className="n"+(b.rssi<-92?" faible":"");}
-    if(ds)ds.textContent=b.distance===null?"—":b.distance+" m";
-    if(ls)ls.textContent=b.lieu;
-    if(es_){
-      const etats=[];
-      if(b.occlusion)etats.push("corps devant");
-      if(b.envers)etats.push("à l'envers");
-      if(b.muette)etats.push("muette");
-      if(etats.length){es_.innerHTML="";
-        etats.forEach(x=>{const sp=document.createElement("span");
-          sp.className="badge";sp.textContent=x;es_.appendChild(sp);});}
-      else{es_.innerHTML='<span class="rien">—</span>';}
+function maj(e) {
+  document.getElementById("temps").textContent = Math.round(e.t) + " s";
+  document.getElementById("cl").textContent = e.clients + " client(s) branché(s).";
+  document.getElementById("e-mode").textContent = {
+    manuel: "manuel",
+    scenario: "scénario",
+    rejeu: "rejeu"
+  } [e.mode];
+  document.getElementById("e-titre").textContent =
+    e.titre + (e.termine ? " — terminé" : "") + " · " + e.verites + " événements de vérité";
+  document.getElementById("prog").style.width =
+    e.duree ? Math.min(100, 100 * e.t / e.duree) + "%" : "0";
+  const p = document.getElementById("pause");
+  p.classList.toggle("on", e.pause);
+  p.textContent = e.pause ? "Reprendre" : "Pause";
+  const r = document.getElementById("rec");
+  r.classList.toggle("on", !!e.enregistre);
+  r.textContent = e.enregistre ? "Arrêter l'enregistrement" : "Enregistrer";
+  document.getElementById("nom").disabled = !!e.enregistre;
+  document.getElementById("a1m").textContent = e.reglages.RSSI_1M;
+  for (const n of ["SIGMA", "EXPOSANT", "PERTE"]) {
+    const el = document.getElementById(n);
+    if (document.activeElement !== el) {
+      el.value = e.reglages[n];
+      document.getElementById(n + "v").textContent = e.reglages[n];
     }
-    const m=btns[b.id];if(!m||!m.occlusion)continue;
-    m.occlusion.classList.toggle("on",b.occlusion);
-    m.envers.classList.toggle("on",b.envers);
-    m.muette.classList.toggle("on",b.muette);
+  }
+  document.getElementById("norg").hidden = (e.mode !== "rejeu");
+  if (modeVu !== e.mode || nbVu !== e.balises.length) {
+    modeVu = e.mode;
+    nbVu = e.balises.length;
+    construire(e);
+  }
+  for (const b of e.balises) {
+    const rs = document.getElementById("r_" + b.id),
+      ds = document.getElementById("d_" + b.id),
+      ls = document.getElementById("l_" + b.id),
+      es_ = document.getElementById("e_" + b.id);
+    if (!rs)
+      continue;
+    if (b.muet) {
+      rs.textContent = "silence";
+      rs.className = "n muet";
+    } else if (b.rssi === null) {
+      rs.textContent = "—";
+      rs.className = "n muet";
+    } else {
+      rs.textContent = b.rssi;
+      rs.className = "n" + (b.rssi < -92 ? " faible" : "");
+    }
+    if (ds)
+      ds.textContent = b.distance === null ? "—" : b.distance + " m";
+    if (ls)
+      ls.textContent = b.lieu;
+    if (es_) {
+      const etats = [];
+      if (b.occlusion)
+        etats.push("corps devant");
+      if (b.envers)
+        etats.push("à l'envers");
+      if (b.muette)
+        etats.push("muette");
+      if (etats.length) {
+        es_.innerHTML = "";
+        etats.forEach(x => {
+          const sp = document.createElement("span");
+          sp.className = "badge";
+          sp.textContent = x;
+          es_.appendChild(sp);
+        });
+      } else {
+        es_.innerHTML = '<span class="rien">—</span>';
+      }
+    }
+    const m = btns[b.id];
+    if (!m || !m.occlusion)
+      continue;
+    m.occlusion.classList.toggle("on", b.occlusion);
+    m.envers.classList.toggle("on", b.envers);
+    m.muette.classList.toggle("on", b.muette);
   }
 }
 
-function construire(e){
-  const manuel=e.mode==="manuel",rejeu=e.mode==="rejeu";
-  const th=document.getElementById("th");th.innerHTML="";
-  const tr0=document.createElement("tr");
-  let cols='<th>Balise</th><th class="n">RSSI</th>';
-  if(!rejeu)cols+='<th class="n">Distance</th><th>Où elle est</th>';
-  cols+=manuel?'<th>Ce qu\'on lui fait faire</th><th>État permanent</th>'
-              :'<th>État</th>';
-  tr0.innerHTML=cols;th.appendChild(tr0);
+function construire(e) {
+  const manuel = e.mode === "manuel",
+    rejeu = e.mode === "rejeu";
+  const th = document.getElementById("th");
+  th.innerHTML = "";
+  const tr0 = document.createElement("tr");
+  let cols = '<th>Balise</th><th class="n">RSSI</th>';
+  if (!rejeu)
+    cols += '<th class="n">Distance</th><th>Où elle est</th>';
+  cols += manuel ? '<th>Ce qu\'on lui fait faire</th><th>État permanent</th>' :
+    '<th>État</th>';
+  tr0.innerHTML = cols;
+  th.appendChild(tr0);
 
-  const tb=document.getElementById("tb");tb.innerHTML="";btns={};
-  e.balises.forEach((b,i)=>{idx[b.id]=i;btns[b.id]={};
-    const tr=document.createElement("tr");
-    let h='<td class="id" style="color:'+COUL[i%6]+'"></td>'+
-          '<td class="n" id="r_'+b.id+'"></td>';
-    if(!rejeu)h+='<td class="n" id="d_'+b.id+'"></td>'+
-                 '<td class="lieu" id="l_'+b.id+'"></td>';
-    h+=manuel?'<td></td><td></td>':'<td id="e_'+b.id+'"></td>';
-    tr.innerHTML=h;
-    tr.children[0].textContent=b.id;
-    if(b.origine!=="A"){
-      const tg=document.createElement("span");tg.className="tag";
-      tg.textContent="station "+b.origine;tr.children[0].appendChild(tg);}
-    if(manuel){
-      const tdA=tr.children[4],tdB=tr.children[5];
-      (b.origine==="A"?DEPLACE:ETRANGER).forEach(([act,lab,aide])=>{
-        const bt=document.createElement("button");bt.textContent=lab;
-        bt.title=aide;bt.onclick=()=>q(act,b.id);tdA.appendChild(bt);});
-      BASCULE.forEach(([act,lab,clef,aide])=>{
-        const bt=document.createElement("button");bt.className="bsc";
-        bt.title=aide;bt.onclick=()=>q(act,b.id);
-        bt.innerHTML='<i></i>';bt.appendChild(document.createTextNode(lab));
-        btns[b.id][clef]=bt;tdB.appendChild(bt);});
+  const tb = document.getElementById("tb");
+  tb.innerHTML = "";
+  btns = {};
+  e.balises.forEach((b, i) => {
+    idx[b.id] = i;
+    btns[b.id] = {};
+    const tr = document.createElement("tr");
+    let h = '<td class="id" style="color:' + COUL[i % 6] + '"></td>' +
+      '<td class="n" id="r_' + b.id + '"></td>';
+    if (!rejeu)
+      h += '<td class="n" id="d_' + b.id + '"></td>' +
+      '<td class="lieu" id="l_' + b.id + '"></td>';
+    h += manuel ? '<td></td><td></td>' : '<td id="e_' + b.id + '"></td>';
+    tr.innerHTML = h;
+    tr.children[0].textContent = b.id;
+    if (b.origine !== "A") {
+      const tg = document.createElement("span");
+      tg.className = "tag";
+      tg.textContent = "station " + b.origine;
+      tr.children[0].appendChild(tg);
     }
-    tb.appendChild(tr);});
+    if (manuel) {
+      const tdA = tr.children[4],
+        tdB = tr.children[5];
+      (b.origine === "A" ? DEPLACE : ETRANGER).forEach(([act, lab, aide]) => {
+        const bt = document.createElement("button");
+        bt.textContent = lab;
+        bt.title = aide;
+        bt.onclick = () => q(act, b.id);
+        tdA.appendChild(bt);
+      });
+      BASCULE.forEach(([act, lab, clef, aide]) => {
+        const bt = document.createElement("button");
+        bt.className = "bsc";
+        bt.title = aide;
+        bt.onclick = () => q(act, b.id);
+        bt.innerHTML = '<i></i>';
+        bt.appendChild(document.createTextNode(lab));
+        btns[b.id][clef] = bt;
+        tdB.appendChild(bt);
+      });
+    }
+    tb.appendChild(tr);
+  });
 
-  document.getElementById("leg").hidden=!manuel;
-  const note=document.getElementById("note");
-  note.hidden=manuel;
-  note.textContent=rejeu
-    ? "Rejeu d'un fichier : rien n'est simulé, les observations sortent telles "+
-      "qu'elles ont été enregistrées. Passez en Manuel pour piloter les planches."
-    : "Scénario en cours : le déroulement est scripté. Passez en Manuel pour "+
-      "reprendre la main sur les planches.";
+  document.getElementById("leg").hidden = !manuel;
+  const note = document.getElementById("note");
+  note.hidden = manuel;
+  note.textContent = rejeu ?
+    "Rejeu d'un fichier : rien n'est simulé, les observations sortent telles " +
+    "qu'elles ont été enregistrées. Passez en Manuel pour piloter les planches." :
+    "Scénario en cours : le déroulement est scripté. Passez en Manuel pour " +
+    "reprendre la main sur les planches.";
 }
 
-const cv=document.getElementById("cv"),cx=cv.getContext("2d");
-function dessiner(t){
-  const W=cv.width,H=cv.height,T0=Math.max(0,t-240),T1=Math.max(240,t);
-  const hi=-55,lo=-105;
-  cx.clearRect(0,0,W,H);
-  cx.strokeStyle="#8a988f";cx.lineWidth=1;cx.font="16px system-ui";
-  cx.fillStyle="#8a988f";
-  for(let v=-60;v>=-100;v-=20){
-    const y=H*(hi-v)/(hi-lo);cx.globalAlpha=.3;cx.beginPath();
-    cx.moveTo(34,y);cx.lineTo(W,y);cx.stroke();cx.globalAlpha=1;
-    cx.fillText(v,2,y+5);}
+const cv = document.getElementById("cv"),
+  cx = cv.getContext("2d");
+
+function dessiner(t) {
+  const W = cv.width,
+    H = cv.height,
+    T0 = Math.max(0, t - 240),
+    T1 = Math.max(240, t);
+  const hi = -55,
+    lo = -105;
+  cx.clearRect(0, 0, W, H);
+  cx.strokeStyle = "#8a988f";
+  cx.lineWidth = 1;
+  cx.font = "16px system-ui";
+  cx.fillStyle = "#8a988f";
+  for (let v = -60; v >= -100; v -= 20) {
+    const y = H * (hi - v) / (hi - lo);
+    cx.globalAlpha = .3;
+    cx.beginPath();
+    cx.moveTo(34, y);
+    cx.lineTo(W, y);
+    cx.stroke();
+    cx.globalAlpha = 1;
+    cx.fillText(v, 2, y + 5);
+  }
   // une planche partie cesse d'émettre : entre son dernier paquet et le
   // premier de son retour, il n'y a rien à tracer. Sans cette coupure, le
   // graphe relie les deux et dessine une longue diagonale.
-  const TROU=8;
-  let i=0;
-  for(const k in hist){
+  const TROU = 8;
+  let i = 0;
+  for (const k in hist) {
     // (idx[k]||i) était faux : l'index 0 de korko-01 est falsy, elle
     // héritait donc de la couleur de sa voisine.
-    const c=(k in idx)?idx[k]:i;
-    cx.strokeStyle=COUL[c%6];cx.lineWidth=2;cx.beginPath();
-    let prec=null;
-    for(const [tt,rr] of hist[k]){
-      if(tt<T0||tt>T1)continue;
-      const x=34+(W-34)*(tt-T0)/(T1-T0),y=H*(hi-rr)/(hi-lo);
-      if(prec===null||tt-prec>TROU)cx.moveTo(x,y);else cx.lineTo(x,y);
-      prec=tt;}
-    cx.stroke();i++;}
+    const c = (k in idx) ? idx[k] : i;
+    cx.strokeStyle = COUL[c % 6];
+    cx.lineWidth = 2;
+    cx.beginPath();
+    let prec = null;
+    for (const [tt, rr] of hist[k]) {
+      if (tt < T0 || tt > T1)
+        continue;
+      const x = 34 + (W - 34) * (tt - T0) / (T1 - T0),
+        y = H * (hi - rr) / (hi - lo);
+      if (prec === null || tt - prec > TROU)
+        cx.moveTo(x, y);
+      else
+        cx.lineTo(x, y);
+      prec = tt;
+    }
+    cx.stroke();
+    i++;
+  }
 }
 bibliotheque();
 </script></body></html>"""
 
 
 def servir(sim, diffuseur):
+    """Relie le simulateur, son interface HTTP et le flux TCP des stations."""
+
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
@@ -1057,8 +1610,10 @@ def servir(sim, diffuseur):
                         time.sleep(0.2)
                         etat = sim.etat()
                         etat["clients"] = diffuseur.nombre
-                        charge = json.dumps({"obs": sim.vider_tampon(),
-                                             "etat": etat}, ensure_ascii=False)
+                        charge = json.dumps(
+                            {"obs": sim.vider_tampon(), "etat": etat},
+                            ensure_ascii=False,
+                        )
                         self.wfile.write(b"data: " + charge.encode() + b"\n\n")
                         self.wfile.flush()
                 except OSError:
@@ -1082,7 +1637,7 @@ def servir(sim, diffuseur):
                 if action in ("manuel", "scenario", "trace", "recommencer"):
                     diffuseur.reinitialiser_flux(sim.t, sim.station)
                 self._json({"ok": True})
-            except Exception as e:                       # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
                 self._json({"ok": False, "erreur": str(e)})
 
     srv = ThreadingHTTPServer(("0.0.0.0", PORT_PAGE), H)
@@ -1091,6 +1646,7 @@ def servir(sim, diffuseur):
 
 
 def principal():
+    """Choisit le scénario et le mode de sortie demandés en ligne de commande."""
     sim = Simulateur()
     diffuseur = Diffuseur()
     diffuseur.demarrer()

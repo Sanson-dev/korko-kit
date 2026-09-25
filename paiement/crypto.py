@@ -24,11 +24,11 @@ from web3.exceptions import TimeExhausted, TransactionNotFound
 
 from smart_contract import chaine
 
-TAUX_DEMO = 10**12      # wei d'AVAX de test par euro : 1 € = 0,000001 AVAX
+TAUX_DEMO = 10**12  # wei d'AVAX de test par euro : 1 € = 0,000001 AVAX
 DOSSIER = os.path.dirname(os.path.abspath(__file__))
 FICHIER_SEQUESTRE = os.path.join(DOSSIER, "sequestre_korko.json")
-GAZ_BLOQUER = 100_000   # limite de gaz du blocage (≈ 68 000 consommés)
-GAZ_VIREMENT = 21_000   # gaz d'un simple virement d'AVAX
+GAZ_BLOQUER = 100_000  # limite de gaz du blocage (≈ 68 000 consommés)
+GAZ_VIREMENT = 21_000  # gaz d'un simple virement d'AVAX
 
 #: le virement d'approvisionnement reprend le réseau et les frais du blocage
 CHAMPS_REPRIS = ("chainId", "maxFeePerGas", "maxPriorityFeePerGas")
@@ -62,8 +62,9 @@ def ouvrir_sequestre(w3):
     """Retourne le contrat déployé, décrit par sequestre_korko.json."""
     with open(FICHIER_SEQUESTRE, encoding="utf-8") as fichier:
         deploiement = json.load(fichier)
-    return w3.eth.contract(address=deploiement["adresse"],
-                           abi=deploiement["abi"], decode_tuples=True)
+    return w3.eth.contract(
+        address=deploiement["adresse"], abi=deploiement["abi"], decode_tuples=True
+    )
 
 
 def demarrer(journaliser):
@@ -146,11 +147,14 @@ class Envoi:
         Même règle que le nœud : valeur + gaz × frais maximum.
         """
         transaction = self.transaction
-        cout = (transaction.get("value", 0)
-                + transaction["gas"] * transaction["maxFeePerGas"])
+        cout = (
+            transaction.get("value", 0)
+            + transaction["gas"] * transaction["maxFeePerGas"]
+        )
         if self.w3.eth.get_balance(self.compte.address) < cout:
-            raise FondsInsuffisants("fonds insuffisants sur %s"
-                                    % abreger(self.compte.address))
+            raise FondsInsuffisants(
+                "fonds insuffisants sur %s" % abreger(self.compte.address)
+            )
 
 
 class Sequestre(threading.Thread):
@@ -173,13 +177,11 @@ class Sequestre(threading.Thread):
 
     def bloquer(self, autorisation, cle_client):
         """Met en file le blocage de la caution par le portefeuille client."""
-        self.file.put(("blocage", self.executer_blocage, autorisation,
-                       cle_client))
+        self.file.put(("blocage", self.executer_blocage, autorisation, cle_client))
 
     def debiter(self, autorisation, montant):
         """Met en file le paiement de `montant` euros sur la caution."""
-        self.file.put(("règlement", self.executer_reglement, autorisation,
-                       montant))
+        self.file.put(("règlement", self.executer_reglement, autorisation, montant))
 
     def run(self):
         """Traite la file dans l'ordre d'arrivée ; un échec ne l'arrête pas."""
@@ -203,8 +205,10 @@ class Sequestre(threading.Thread):
         else:
             raison = chaine.nommer_refus(self.contrat, erreur)
         autorisation.etat = "échec"
-        self.journaliser("CRYPTO échec du %s %s : %s"
-                         % (etape, abreger(autorisation.reference), raison))
+        self.journaliser(
+            "CRYPTO échec du %s %s : %s"
+            % (etape, abreger(autorisation.reference), raison)
+        )
 
     def executer_blocage(self, autorisation, cle_client):
         """Bloque la caution depuis le portefeuille du client.
@@ -214,8 +218,7 @@ class Sequestre(threading.Thread):
         client = Account.from_key(cle_client)
         valeur = en_wei(autorisation.montant)
         appel = self.contrat.functions.bloquer(autorisation.reference)
-        options = {"from": client.address, "value": valeur,
-                   "gas": GAZ_BLOQUER}
+        options = {"from": client.address, "value": valeur, "gas": GAZ_BLOQUER}
         transaction = self.insister(appel.build_transaction, options)
         frais_max = GAZ_BLOQUER * transaction["maxFeePerGas"]
         self.approvisionner(transaction, valeur + frais_max)
@@ -234,8 +237,10 @@ class Sequestre(threading.Thread):
         virement = {cle: transaction[cle] for cle in CHAMPS_REPRIS}
         virement.update(to=adresse, value=manque, gas=GAZ_VIREMENT)
         hash_transaction = self.transmettre(self.korko, virement)
-        self.journaliser("CRYPTO approvisionnement %s : %s"
-                         % (abreger(adresse), chaine.lien(hash_transaction)))
+        self.journaliser(
+            "CRYPTO approvisionnement %s : %s"
+            % (abreger(adresse), chaine.lien(hash_transaction))
+        )
 
     def executer_reglement(self, autorisation, montant):
         """Paie la location sur la caution et rend le reste au client.
@@ -260,13 +265,14 @@ class Sequestre(threading.Thread):
         preuve = chaine.lien(hash_transaction)
         autorisation.liens.append(preuve)
         autorisation.etat = etat
-        self.journaliser("CRYPTO caution %s %s : %s"
-                         % (etat, abreger(autorisation.reference), preuve))
+        self.journaliser(
+            "CRYPTO caution %s %s : %s"
+            % (etat, abreger(autorisation.reference), preuve)
+        )
 
     def transmettre(self, compte, transaction):
         """Envoie la transaction, signée une seule fois ; retourne son hash."""
-        return self.insister(confirmer_seul, Envoi(self.w3, compte,
-                                                   transaction))
+        return self.insister(confirmer_seul, Envoi(self.w3, compte, transaction))
 
     def insister(self, action, *arguments):
         """Retourne le résultat de l'action, réessayée sur une des ATTENTES."""

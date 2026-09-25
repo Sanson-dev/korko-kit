@@ -62,6 +62,7 @@ Reinitialisation = namedtuple("Reinitialisation", "t station")
 # Cette couche fournit le contrat minimal entre le matériel radio et le
 # logique métier : on reçoit des observations, on émet des événements.
 
+
 class Detecteur:
     """Hérite de cette classe, implémente observation() et tic()."""
 
@@ -100,8 +101,12 @@ class Detecteur:
     _journal = None
 
     def _emettre(self, t, station, balise, evenement):
-        e = {"t": round(t, 3), "station": station,
-             "balise": balise, "evenement": evenement}
+        e = {
+            "t": round(t, 3),
+            "station": station,
+            "balise": balise,
+            "evenement": evenement,
+        }
         if self._journal is not None:
             self._journal.append(e)
         if self._sortie is not None:
@@ -115,6 +120,7 @@ class Detecteur:
 # La source transforme un flux brut en observations exploitables, qu'elles
 # viennent d'un fichier de traces ou d'un réseau TCP.
 
+
 def source_fichier(chemin):
     """Rejoue un fichier de traces au format contrat."""
     with open(chemin, encoding="utf-8") as f:
@@ -124,8 +130,7 @@ def source_fichier(chemin):
                 continue
             d = json.loads(ligne)
             if "rssi" in d:
-                yield Observation(d["t"], d.get("station", "A"),
-                                  d["balise"], d["rssi"])
+                yield Observation(d["t"], d.get("station", "A"), d["balise"], d["rssi"])
 
 
 def source_reseau(adresse, timeout=0.25):
@@ -165,8 +170,9 @@ def source_reseau(adresse, timeout=0.25):
                     yield Battement(d["t"], d.get("station", "A"))
                     continue
                 if "rssi" in d:
-                    yield Observation(d["t"], d.get("station", "A"),
-                                      d["balise"], d["rssi"])
+                    yield Observation(
+                        d["t"], d.get("station", "A"), d["balise"], d["rssi"]
+                    )
     finally:
         s.close()
 
@@ -232,20 +238,25 @@ def afficher_score(s):
     print(f"  faux retours ............ {len(s['faux_retours'])}", file=sys.stderr)
     print(f"  événements manqués ...... {len(s['manques'])}", file=sys.stderr)
     if s["latence_mediane"] is not None:
-        print(f"  latence médiane ......... {s['latence_mediane']:.1f} s",
-              file=sys.stderr)
-        print(f"  latence maximale ........ {s['latence_max']:.1f} s",
-              file=sys.stderr)
+        print(
+            f"  latence médiane ......... {s['latence_mediane']:.1f} s", file=sys.stderr
+        )
+        print(f"  latence maximale ........ {s['latence_max']:.1f} s", file=sys.stderr)
     faux = s["faux_departs"] + s["faux_retours"]
     faux.sort(key=lambda e: e["t"])
     for f in faux[:6]:
-        print(f"    ! faux {f['evenement'].lower()} : {f['balise']} "
-              f"à t={f['t']:.0f}", file=sys.stderr)
+        print(
+            f"    ! faux {f['evenement'].lower()} : {f['balise']} " f"à t={f['t']:.0f}",
+            file=sys.stderr,
+        )
     if len(faux) > 6:
         print(f"    ! … et {len(faux) - 6} autres", file=sys.stderr)
     for m in s["manques"][:6]:
-        print(f"    ? manqué : {m['evenement'].lower()} de {m['balise']} "
-              f"à t={m['t']:.0f}", file=sys.stderr)
+        print(
+            f"    ? manqué : {m['evenement'].lower()} de {m['balise']} "
+            f"à t={m['t']:.0f}",
+            file=sys.stderr,
+        )
     if len(s["manques"]) > 6:
         print(f"    ? … et {len(s['manques']) - 6} autres", file=sys.stderr)
     print("", file=sys.stderr)
@@ -256,6 +267,7 @@ def afficher_score(s):
 # --------------------------------------------------------------------------
 # La boucle fait avancer le temps et appelle tic() à cadence fixe.
 
+
 def _boucle(detecteur, flux, temps_reel, verbeux):
     """Consomme un flux d'Observations (ou None) et cadence les tics."""
     prochain_tic = None
@@ -265,6 +277,8 @@ def _boucle(detecteur, flux, temps_reel, verbeux):
 
     for o in flux:
         if o is None:
+            # Une source qui émet ses battements maîtrise aussi les pauses :
+            # extrapoler au temps réel ferait avancer une simulation arrêtée.
             if dernier_t is None or horloge_source:
                 continue
             if temps_reel:
@@ -300,32 +314,47 @@ def _boucle(detecteur, flux, temps_reel, verbeux):
 
         if isinstance(o, Observation):
             if verbeux:
-                print(f"    {o.t:9.1f}  {o.balise}  {o.rssi:4d} dBm",
-                      file=sys.stderr)
+                print(f"    {o.t:9.1f}  {o.balise}  {o.rssi:4d} dBm", file=sys.stderr)
             detecteur.observation(o)
 
 
 def lancer(classe, argv=None):
     """Point d'entrée standard. Met `lancer(MonAlgo)` en bas de ton fichier."""
     p = argparse.ArgumentParser(
-        description="Détecteur KORKO — départs et retours de planches.")
+        description="Détecteur KORKO — départs et retours de planches."
+    )
     g = p.add_mutually_exclusive_group()
-    g.add_argument("--sim", action="store_true",
-                   help="simulateur intégré (avec score en fin de course)")
-    g.add_argument("--rejeu", metavar="FICHIER",
-                   help="rejoue un fichier de traces")
-    g.add_argument("--source", metavar="HOTE:PORT",
-                   help="se connecte à un simulateur ou à un Pi")
-    p.add_argument("--scenario", default="journee",
-                   help="scénario du simulateur (défaut : journee)")
-    p.add_argument("--duree", type=float, default=None,
-                   help="durée simulée en secondes")
-    p.add_argument("--graine", type=int, default=7,
-                   help="graine du bruit, pour des runs reproductibles")
-    p.add_argument("--chaos", action="store_true",
-                   help="ajoute des pertes de paquets et des trous réseau")
-    p.add_argument("-v", "--verbeux", action="store_true",
-                   help="affiche chaque paquet reçu")
+    g.add_argument(
+        "--sim",
+        action="store_true",
+        help="simulateur intégré (avec score en fin de course)",
+    )
+    g.add_argument("--rejeu", metavar="FICHIER", help="rejoue un fichier de traces")
+    g.add_argument(
+        "--source", metavar="HOTE:PORT", help="se connecte à un simulateur ou à un Pi"
+    )
+    p.add_argument(
+        "--scenario",
+        default="journee",
+        help="scénario du simulateur (défaut : journee)",
+    )
+    p.add_argument(
+        "--duree", type=float, default=None, help="durée simulée en secondes"
+    )
+    p.add_argument(
+        "--graine",
+        type=int,
+        default=7,
+        help="graine du bruit, pour des runs reproductibles",
+    )
+    p.add_argument(
+        "--chaos",
+        action="store_true",
+        help="ajoute des pertes de paquets et des trous réseau",
+    )
+    p.add_argument(
+        "-v", "--verbeux", action="store_true", help="affiche chaque paquet reçu"
+    )
     a = p.parse_args(argv)
 
     d = classe()
@@ -336,6 +365,7 @@ def lancer(classe, argv=None):
     if a.rejeu:
         _boucle(d, source_fichier(a.rejeu), False, a.verbeux)
         import os
+
         sidecar = os.path.splitext(a.rejeu)[0] + ".verite.json"
         if os.path.exists(sidecar):
             with open(sidecar, encoding="utf-8") as f:
@@ -346,6 +376,7 @@ def lancer(classe, argv=None):
 
     else:
         from korko_sim import Simulateur
+
         sim = Simulateur(graine=a.graine, chaos=a.chaos)
         sim.charger_scenario(a.scenario)
         _boucle(d, sim.flux(duree=a.duree), False, a.verbeux)

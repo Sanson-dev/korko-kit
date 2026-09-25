@@ -8,6 +8,8 @@
  * Le serveur ne reçoit jamais le numéro complet de la carte ni son CVC.
  */
 
+/* ---------- Configuration, états et contrats d’affichage ---------- */
+
 const STATION = 'A';
 const TARIF_MINUTE = 0.2;
 const INTERVALLE_SONDAGE = 1200;
@@ -24,23 +26,23 @@ const ETATS_CLOS = ['retournée', 'caution débitée', 'annulée'];
 const MESSAGE_RESEAU = 'Connexion impossible. Vérifiez le réseau et réessayez.';
 const MESSAGE_STATION = 'La station ne répond pas. Réessayez dans un instant.';
 const MESSAGE_REINITIALISATION = 'La démonstration a été réinitialisée.';
-const MESSAGE_RETOUR_STATION = 'Réservation impossible sans connexion. Revenez '
-  + 'à l’accueil pour prendre une planche à la station.';
+const MESSAGE_RETOUR_STATION = 'Réservation impossible sans connexion. Revenez ' +
+  'à l’accueil pour prendre une planche à la station.';
 /* Refus du cloud qui concernent le moyen de paiement (pas l'horaire ni le parc). */
 const REFUS_DU_MOYEN = /paiement|carte/i;
 const ETATS_EN_LOCATION = ['armée', 'en cours'];
-const TEXTE_LOCATION = 'La station continue de suivre votre planche. Tout sera '
-  + 'synchronisé dès le retour de la connexion.';
-const TEXTE_CLOTURE = 'Le service en ligne ne répond pas. Tout sera mis à jour '
-  + 'dès le retour de la connexion.';
+const TEXTE_LOCATION = 'La station continue de suivre votre planche. Tout sera ' +
+  'synchronisé dès le retour de la connexion.';
+const TEXTE_CLOTURE = 'Le service en ligne ne répond pas. Tout sera mis à jour ' +
+  'dès le retour de la connexion.';
 /* Texte du bandeau « Connexion limitée » : par écran, et trois cas sur l'accueil. */
 const TEXTES_HORS_LIGNE = {
-  autorise: 'Le service en ligne ne répond pas. Vous pouvez tout de même '
-    + 'prendre une planche à la station.',
-  inconnu: 'Le service en ligne ne répond pas. Une première location en '
-    + 'ligne est nécessaire pour louer hors ligne.',
-  muette: 'Le service en ligne et la station ne répondent pas. Réessayez '
-    + 'dans un instant.',
+  autorise: 'Le service en ligne ne répond pas. Vous pouvez tout de même ' +
+    'prendre une planche à la station.',
+  inconnu: 'Le service en ligne ne répond pas. Une première location en ' +
+    'ligne est nécessaire pour louer hors ligne.',
+  muette: 'Le service en ligne et la station ne répondent pas. Réessayez ' +
+    'dans un instant.',
   identification: 'Le service en ligne ne répond pas. Réessayez dans un instant.',
   reservee: TEXTE_LOCATION,
   'en-cours': TEXTE_LOCATION,
@@ -78,6 +80,7 @@ const AFFICHAGES_LOCAUX = {
   EN_COURS: afficherEnCoursLocal,
   TERMINEE: afficherRecuLocal,
 };
+/* État de cet onglet. epoque invalide les réponses parties avant un reset. */
 const vue = {
   identifiant: identifiantAppareil(),
   generation: lireJson(CLE_GENERATION),
@@ -141,7 +144,8 @@ function prixEstime(secondes) {
  */
 function texteEnrichi(texte) {
   return String(texte || '').split('**').map((morceau, rang) => {
-    if (rang % 2 === 0) return morceau;
+    if (rang % 2 === 0)
+      return morceau;
     const gras = document.createElement('strong');
     gras.textContent = morceau;
     return gras;
@@ -187,14 +191,18 @@ function clientMemorise() {
 }
 
 /* Un reçu ou une annulation déjà vus ne reviennent pas au rechargement. */
-function sessionFermee({etat, session_id: session}) {
+function sessionFermee({
+  etat,
+  session_id: session
+}) {
   const fermees = lireJson(CLE_SESSIONS_FERMEES) || [];
   return ETATS_CLOS.includes(etat) && fermees.includes(session);
 }
 
 function fermerSession(session) {
   const fermees = lireJson(CLE_SESSIONS_FERMEES) || [];
-  if (!session || fermees.includes(session)) return;
+  if (!session || fermees.includes(session))
+    return;
   const dernieres = [...fermees, session].slice(-20);
   ecrireMemoire(CLE_SESSIONS_FERMEES, JSON.stringify(dernieres));
 }
@@ -214,7 +222,8 @@ function identifiantAppareil() {
 /* Prénom, nom et téléphone restent pour pré-remplir le formulaire. */
 function oublierPaiementMemorise() {
   const client = clientMemorise();
-  if (!client) return;
+  if (!client)
+    return;
   delete client.paiement;
   ecrireMemoire(CLE_CLIENT, JSON.stringify(client));
 }
@@ -228,8 +237,12 @@ function enLocation(etat) {
  * cloud tombe, il reste affiché, figé, et bloque une prise à la station.
  */
 function retenirSessionEnLigne(donnees) {
-  if (!enLocation(donnees.etat)) return effacerMemoire(CLE_SESSION_EN_LIGNE);
-  const sansJeton = {...donnees, offline_authorization: undefined};
+  if (!enLocation(donnees.etat))
+    return effacerMemoire(CLE_SESSION_EN_LIGNE);
+  const sansJeton = {
+    ...donnees,
+    offline_authorization: undefined
+  };
   ecrireMemoire(CLE_SESSION_EN_LIGNE, JSON.stringify(sansJeton));
 }
 
@@ -265,9 +278,9 @@ function memoriserAutorisation(jeton, sessionId) {
 
 function autorisationValide() {
   const autorisation = lireJson(CLE_AUTORISATION);
-  const valide = Boolean(autorisation && autorisation.token)
-    && autorisation.station_id === STATION
-    && autorisation.expires > Date.now() / 1000;
+  const valide = Boolean(autorisation && autorisation.token) &&
+    autorisation.station_id === STATION &&
+    autorisation.expires > Date.now() / 1000;
   return valide ? autorisation : null;
 }
 
@@ -285,8 +298,12 @@ function oublierReservationLocale() {
 
 function retenirStatutLocal(statut) {
   const reservation = reservationLocale();
-  if (!reservation || reservation.statut === statut) return;
-  memoriserReservationLocale({...reservation, statut});
+  if (!reservation || reservation.statut === statut)
+    return;
+  memoriserReservationLocale({
+    ...reservation,
+    statut
+  });
 }
 
 /* Une fois le reçu hors ligne quitté, la location locale est oubliée. */
@@ -300,13 +317,18 @@ function oublierLocationTerminee() {
 /* ---------- Échanges avec le cloud et la station ---------- */
 
 function optionsRequete(corps, delai) {
-  const options = delai && AbortSignal.timeout
-    ? {signal: AbortSignal.timeout(delai)} : {};
-  if (!corps) return options;
+  const options = delai && AbortSignal.timeout ?
+    {
+      signal: AbortSignal.timeout(delai)
+    } : {};
+  if (!corps)
+    return options;
   return {
     ...options,
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: {
+      'Content-Type': 'application/json'
+    },
     body: JSON.stringify(corps),
   };
 }
@@ -326,8 +348,12 @@ async function requeteJson(url, corps, delai) {
     return null;
   }
   const donnees = await reponse.json().catch(() => null);
-  if (!donnees || reponse.status >= 500) return null;
-  return {ok: reponse.ok, donnees};
+  if (!donnees || reponse.status >= 500)
+    return null;
+  return {
+    ok: reponse.ok,
+    donnees
+  };
 }
 
 /*
@@ -337,23 +363,31 @@ async function requeteJson(url, corps, delai) {
 async function appelerApi(url, corps) {
   const epoque = vue.epoque;
   const resultat = await requeteJson(url, corps, corps ? 0 : DELAI_SONDAGE);
-  if (epoque !== vue.epoque) throw erreurMarquee('', 'ignoree');
+  if (epoque !== vue.epoque)
+    throw erreurMarquee('', 'ignoree');
   basculerHorsLigne(!resultat);
-  if (!resultat) throw erreurMarquee(MESSAGE_RESEAU, 'reseau');
-  const {ok, donnees} = resultat;
+  if (!resultat)
+    throw erreurMarquee(MESSAGE_RESEAU, 'reseau');
+  const {
+    ok,
+    donnees
+  } = resultat;
   if (demoReinitialisee(donnees.generation)) {
     reinitialiserDemo();
     throw erreurMarquee(MESSAGE_REINITIALISATION, 'ignoree');
   }
-  if (!ok) throw new Error(donnees.erreur || MESSAGE_RESEAU);
+  if (!ok)
+    throw new Error(donnees.erreur || MESSAGE_RESEAU);
   return donnees;
 }
 
 async function appelerStation(chemin, corps) {
   const resultat = await requeteJson(ADRESSE_STATION + chemin, corps,
     DELAI_SONDAGE);
-  if (!resultat) throw erreurMarquee(MESSAGE_STATION, 'reseau');
-  if (!resultat.ok) throw new Error(resultat.donnees.erreur || MESSAGE_STATION);
+  if (!resultat)
+    throw erreurMarquee(MESSAGE_STATION, 'reseau');
+  if (!resultat.ok)
+    throw new Error(resultat.donnees.erreur || MESSAGE_STATION);
   return resultat.donnees;
 }
 
@@ -370,7 +404,8 @@ function arreterSondage() {
 
 /* Un seul sondage à la fois : une réponse lente ne double pas la suivante. */
 async function rafraichir() {
-  if (vue.sondageEnAttente) return;
+  if (vue.sondageEnAttente)
+    return;
   vue.sondageEnAttente = true;
   try {
     await suivreClient();
@@ -385,19 +420,24 @@ async function suivreClient() {
   try {
     donnees = await appelerApi(url);
   } catch (erreur) {
-    if (erreur.reseau) await suivreHorsLigne();
+    if (erreur.reseau)
+      await suivreHorsLigne();
     return;
   }
-  if (!vue.sondage) return;
-  if (cloudEnRetard(donnees)) return suivreReservationLocale();
+  if (!vue.sondage)
+    return;
+  if (cloudEnRetard(donnees))
+    return suivreReservationLocale();
   afficherClient(donnees);
 }
 
 /* Cloud muet : la station suit la location locale ; une location en ligne reste figée. */
 async function suivreHorsLigne() {
-  if (reservationLocale()) return suivreReservationLocale();
+  if (reservationLocale())
+    return suivreReservationLocale();
   const session = sessionEnLigneActive();
-  if (session && vue.sondage) afficherClient(session);
+  if (session && vue.sondage)
+    afficherClient(session);
 }
 
 /*
@@ -407,9 +447,11 @@ async function suivreHorsLigne() {
  */
 function cloudEnRetard(donnees) {
   const reservation = reservationLocale();
-  if (!reservation) return false;
+  if (!reservation)
+    return false;
   const aJour = cloudAJour(donnees, reservation);
-  if (aJour) oublierReservationLocale();
+  if (aJour)
+    oublierReservationLocale();
   return !aJour;
 }
 
@@ -418,9 +460,14 @@ function cloudEnRetard(donnees) {
  * récente. Si la session précédente est encore en location, le cloud ignore
  * la location locale (une seule à la fois) : c'est lui qui fait foi.
  */
-function cloudAJour({session_id: sessionCloud, etat}, reservation) {
-  if (sessionCloud === reservation.id) return true;
-  if (!sessionCloud) return false;
+function cloudAJour({
+  session_id: sessionCloud,
+  etat
+}, reservation) {
+  if (sessionCloud === reservation.id)
+    return true;
+  if (!sessionCloud)
+    return false;
   return sessionCloud !== reservation.sessionPrecedente || enLocation(etat);
 }
 
@@ -428,8 +475,10 @@ function cloudAJour({session_id: sessionCloud, etat}, reservation) {
 
 /* Vrai si l'admin a réinitialisé la démo depuis la dernière réponse connue. */
 function demoReinitialisee(recue) {
-  if (recue === undefined || recue === null) return false;
-  if (recue === vue.generation) return false;
+  if (recue === undefined || recue === null)
+    return false;
+  if (recue === vue.generation)
+    return false;
   const connue = vue.generation;
   vue.generation = recue;
   ecrireMemoire(CLE_GENERATION, JSON.stringify(recue));
@@ -462,7 +511,8 @@ function reinitialiserDemo() {
   vue.sessionPassee = null;
   vue.sessionAffichee = null;
   const feuille = element('feuille-apple-pay');
-  if (feuille.open) feuille.close();
+  if (feuille.open)
+    feuille.close();
   naviguer('pret');
   afficherAnnonce(MESSAGE_REINITIALISATION);
 }
@@ -470,7 +520,8 @@ function reinitialiserDemo() {
 /* ---------- Connexion limitée ---------- */
 
 function basculerHorsLigne(horsLigne) {
-  if (vue.horsLigne === horsLigne) return;
+  if (vue.horsLigne === horsLigne)
+    return;
   vue.horsLigne = horsLigne;
   element('bandeau-hors-ligne').hidden = !horsLigne;
   element('bouton-surfer').hidden = horsLigne;
@@ -486,19 +537,24 @@ function ecranActif() {
 
 function texteBandeau() {
   const ecran = ecranActif();
-  if (ecran !== 'pret') return TEXTES_HORS_LIGNE[ecran];
-  if (sessionEnLigneActive()) return TEXTE_LOCATION;
-  if (!autorisationValide()) return TEXTES_HORS_LIGNE.inconnu;
+  if (ecran !== 'pret')
+    return TEXTES_HORS_LIGNE[ecran];
+  if (sessionEnLigneActive())
+    return TEXTE_LOCATION;
+  if (!autorisationValide())
+    return TEXTES_HORS_LIGNE.inconnu;
   return vue.stationMuette ? TEXTES_HORS_LIGNE.muette : TEXTES_HORS_LIGNE.autorise;
 }
 
 function actualiserBandeau() {
-  if (vue.horsLigne) element('texte-hors-ligne').textContent = texteBandeau();
+  if (vue.horsLigne)
+    element('texte-hors-ligne').textContent = texteBandeau();
 }
 
 async function chargerParcLocal() {
   const statut = await appelerStation('/offline/status').catch(() => null);
-  if (vue.horsLigne) afficherParcLocal(statut);
+  if (vue.horsLigne)
+    afficherParcLocal(statut);
 }
 
 /* Station muette : le bandeau le dit, les horaires restent les mêmes. */
@@ -513,8 +569,8 @@ function afficherParcLocal(statut) {
 
 /* Une seule location à la fois : pas de prise si une location en ligne court. */
 function priseHorsLignePossible(libres) {
-  return !vue.priseEnCours && Boolean(autorisationValide())
-    && !sessionEnLigneActive() && libres > 0;
+  return !vue.priseEnCours && Boolean(autorisationValide()) &&
+    !sessionEnLigneActive() && libres > 0;
 }
 
 function basculerPriseHorsLigne(enCours) {
@@ -526,8 +582,12 @@ function basculerPriseHorsLigne(enCours) {
 
 async function prendrePlancheHorsLigne() {
   const autorisation = autorisationValide();
-  if (!autorisation || vue.priseEnCours) return;
-  const corps = {authorization: autorisation.token, station: STATION};
+  if (!autorisation || vue.priseEnCours)
+    return;
+  const corps = {
+    authorization: autorisation.token,
+    station: STATION
+  };
   basculerPriseHorsLigne(true);
   element('erreur-hors-ligne').textContent = '';
   try {
@@ -547,24 +607,31 @@ function apresPriseHorsLigne(donnees, autorisation) {
     sessionPrecedente: autorisation.session_id || null,
     statut: 'ARMEE',
   });
-  afficherLocationLocale({status: 'ARMEE', balise: donnees.balise});
+  afficherLocationLocale({
+    status: 'ARMEE',
+    balise: donnees.balise
+  });
   demarrerSondage();
 }
 
 async function suivreReservationLocale() {
   const reservation = reservationLocale();
-  if (!reservation) return;
+  if (!reservation)
+    return;
   const statut = await appelerStation('/offline/status').catch(() => null);
   const location = statut && (statut.locations || []).find(
     candidate => candidate.offline_reservation_id === reservation.id);
   const courante = reservationLocale();
-  if (!location || !vue.sondage || !courante) return;
-  if (courante.id === reservation.id) afficherLocationLocale(location, statut.t);
+  if (!location || !vue.sondage || !courante)
+    return;
+  if (courante.id === reservation.id)
+    afficherLocationLocale(location, statut.t);
 }
 
 function afficherLocationLocale(location, instant) {
   const afficher = AFFICHAGES_LOCAUX[location.status];
-  if (!afficher) return;
+  if (!afficher)
+    return;
   retenirStatutLocal(location.status);
   element('suivi').hidden = true;
   afficher(location, instant);
@@ -612,7 +679,8 @@ function afficherRecuLocal(location) {
 /* ---------- Navigation et disponibilités ---------- */
 
 function afficherEcran(id) {
-  if (element(id).classList.contains('active')) return;
+  if (element(id).classList.contains('active'))
+    return;
   for (const ecran of document.querySelectorAll('.screen')) {
     ecran.classList.toggle('active', ecran.id === id);
   }
@@ -628,7 +696,8 @@ function naviguer(destination) {
   oublierLocationTerminee();
   element('suivi').hidden = true;
   element('annonce').hidden = true;
-  if (destination === 'identification') preparerIdentification();
+  if (destination === 'identification')
+    preparerIdentification();
   afficherEcran(destination);
 }
 
@@ -642,24 +711,31 @@ function afficherAnnonce(texte) {
 function suivreParc(actif) {
   clearInterval(vue.parc);
   vue.parc = actif ? setInterval(chargerParc, INTERVALLE_SONDAGE) : null;
-  if (actif) chargerParc();
+  if (actif)
+    chargerParc();
 }
 
 /* Cloud muet : les disponibilités viennent de la station. */
 async function chargerParc() {
-  if (vue.parcEnAttente) return;
+  if (vue.parcEnAttente)
+    return;
   vue.parcEnAttente = true;
   try {
     afficherParc(await appelerApi('/api/parc'));
   } catch (erreur) {
-    if (erreur.reseau) await chargerParcLocal();
-    else if (!erreur.ignoree) element('nombre-planches').textContent = '—';
+    if (erreur.reseau)
+      await chargerParcLocal();
+    else if (!erreur.ignoree)
+      element('nombre-planches').textContent = '—';
   } finally {
     vue.parcEnAttente = false;
   }
 }
 
-function afficherParc({planches, ouvert}) {
+function afficherParc({
+  planches,
+  ouvert
+}) {
   const libres = Object.values(planches || {}).filter(
     planche => planche.ou === STATION && planche.statut === 'au râtelier');
   const possible = Boolean(ouvert) && libres.length > 0;
@@ -682,8 +758,10 @@ function afficherHoraires(possible, texte) {
 }
 
 function texteHoraires(ouvert, disponible) {
-  if (!ouvert) return 'Fermé : plus de location à partir de 22 h.';
-  if (!disponible) return 'Plus de planche disponible pour le moment.';
+  if (!ouvert)
+    return 'Fermé : plus de location à partir de 22 h.';
+  if (!disponible)
+    return 'Plus de planche disponible pour le moment.';
   return 'Locations jusqu’à 22 h · 0,20 € / minute';
 }
 
@@ -745,13 +823,14 @@ function surMoyenChoisi() {
 function surTelephoneModifie() {
   const client = clientMemorise();
   const saisi = telephoneNormalise(element('telephone').value);
-  const connu = Boolean(client && client.paiement)
-    && telephoneNormalise(client.telephone) === saisi;
+  const connu = Boolean(client && client.paiement) &&
+    telephoneNormalise(client.telephone) === saisi;
   if (connu && !vue.moyenManuel) {
     return proposerMoyenEnregistre(client.paiement);
   }
   element('moyen-enregistre').hidden = !connu;
-  if (!connu && moyenChoisi() === 'enregistre') afficherChoixMoyens();
+  if (!connu && moyenChoisi() === 'enregistre')
+    afficherChoixMoyens();
 }
 
 function choisirMoyen(moyen) {
@@ -815,7 +894,8 @@ function numeroCarteValide(texte) {
 
 function expirationValide(texte) {
   const morceaux = /^(\d{2})\/(\d{2})$/.exec(texte.trim());
-  if (!morceaux) return false;
+  if (!morceaux)
+    return false;
   const mois = Number(morceaux[1]);
   const finDeValidite = new Date(2000 + Number(morceaux[2]), mois, 1);
   return mois >= 1 && mois <= 12 && finDeValidite > new Date();
@@ -826,8 +906,10 @@ function cvcValide(texte) {
 }
 
 function marqueCarte(numero) {
-  if (numero.startsWith('4')) return 'Visa';
-  if (/^(5[1-5]|2[2-7])/.test(numero)) return 'Mastercard';
+  if (numero.startsWith('4'))
+    return 'Visa';
+  if (/^(5[1-5]|2[2-7])/.test(numero))
+    return 'Mastercard';
   return 'Carte';
 }
 
@@ -837,9 +919,11 @@ function grouperParQuatre(saisie) {
 
 function formaterExpiration(saisie) {
   let valeur = chiffres(saisie);
-  if (valeur.length === 6) valeur = valeur.slice(0, 2) + valeur.slice(4);
+  if (valeur.length === 6)
+    valeur = valeur.slice(0, 2) + valeur.slice(4);
   valeur = valeur.slice(0, 4);
-  if (valeur.length <= 2) return valeur;
+  if (valeur.length <= 2)
+    return valeur;
   return valeur.slice(0, 2) + '/' + valeur.slice(2);
 }
 
@@ -862,26 +946,37 @@ function remplirCarteDeTest() {
 }
 
 function viderChampsCarte() {
-  for (const id of Object.keys(CARTE_DE_TEST)) element(id).value = '';
+  for (const id of Object.keys(CARTE_DE_TEST))
+    element(id).value = '';
 }
 
 /* ---------- Réservation ---------- */
 
 function premiereErreur(regles) {
   const regle = regles.find(([id, valide]) => !valide(element(id).value));
-  return regle && {champ: regle[0], message: regle[2]};
+  return regle && {
+    champ: regle[0],
+    message: regle[2]
+  };
 }
 
 /* Erreur de saisie sous le champ fautif ; sinon, juste au-dessus du bouton. */
-function signalerErreur({champ, message}) {
+function signalerErreur({
+  champ,
+  message
+}) {
   const zone = element('erreur-identification');
   if (champ) {
     const fautif = element(champ);
     fautif.after(zone);
     fautif.setAttribute('aria-invalid', 'true');
     fautif.setAttribute('aria-describedby', zone.id);
-    fautif.focus({preventScroll: true});
-    fautif.scrollIntoView({block: 'center'});
+    fautif.focus({
+      preventScroll: true
+    });
+    fautif.scrollIntoView({
+      block: 'center'
+    });
   }
   zone.textContent = message;
 }
@@ -900,11 +995,13 @@ function surReservation(evenement) {
   evenement.preventDefault();
   effacerErreur();
   const moyen = moyenChoisi();
-  const regles = moyen === 'carte'
-    ? [...REGLES_IDENTITE, ...REGLES_CARTE] : REGLES_IDENTITE;
+  const regles = moyen === 'carte' ?
+    [...REGLES_IDENTITE, ...REGLES_CARTE] : REGLES_IDENTITE;
   const erreur = premiereErreur(regles);
-  if (erreur) return signalerErreur(erreur);
-  if (moyen === 'apple_pay') return element('feuille-apple-pay').showModal();
+  if (erreur)
+    return signalerErreur(erreur);
+  if (moyen === 'apple_pay')
+    return element('feuille-apple-pay').showModal();
   reserver();
 }
 
@@ -915,9 +1012,15 @@ function confirmerApplePay() {
 
 function moyenAEnvoyer(moyen) {
   if (moyen === 'crypto') {
-    return {type: 'crypto', nouveau: element('nouveau-portefeuille').checked};
+    return {
+      type: 'crypto',
+      nouveau: element('nouveau-portefeuille').checked
+    };
   }
-  if (moyen !== 'carte') return {type: moyen};
+  if (moyen !== 'carte')
+    return {
+      type: moyen
+    };
   const numero = chiffres(element('numero-carte').value);
   return {
     type: 'carte',
@@ -939,7 +1042,8 @@ function corpsReservation() {
     },
     moyen: moyenAEnvoyer(moyenChoisi()),
   };
-  if (vue.generation !== null) corps.generation = vue.generation;
+  if (vue.generation !== null)
+    corps.generation = vue.generation;
   return corps;
 }
 
@@ -955,7 +1059,8 @@ async function reserver() {
   try {
     apresReservation(corps.client, await appelerApi('/api/arme', corps));
   } catch (erreur) {
-    if (!erreur.ignoree) signalerEchecReservation(erreur, corps.moyen.type);
+    if (!erreur.ignoree)
+      signalerEchecReservation(erreur, corps.moyen.type);
   } finally {
     basculerAttente(false);
   }
@@ -969,18 +1074,29 @@ async function reserver() {
 function signalerEchecReservation(erreur, moyen) {
   if (erreur.reseau) {
     const message = autorisationValide() ? MESSAGE_RETOUR_STATION : MESSAGE_RESEAU;
-    return signalerErreur({message});
+    return signalerErreur({
+      message
+    });
   }
   const refusDuMoyen = REFUS_DU_MOYEN.test(erreur.message);
-  if (moyen === 'enregistre' && refusDuMoyen) oublierMoyenEnregistre();
-  signalerErreur({message: erreur.message});
+  if (moyen === 'enregistre' && refusDuMoyen)
+    oublierMoyenEnregistre();
+  signalerErreur({
+    message: erreur.message
+  });
 }
 
 /* Le numéro est gardé tel que saisi ; jamais aucune donnée de carte. */
 function memoriserClient(client, paiement) {
-  const fiche = paiement
-    ? {...client, paiement: {type: paiement.type, libelle: paiement.libelle}}
-    : client;
+  const fiche = paiement ?
+    {
+      ...client,
+      paiement: {
+        type: paiement.type,
+        libelle: paiement.libelle
+      }
+    } :
+    client;
   ecrireMemoire(CLE_CLIENT, JSON.stringify(fiche));
 }
 
@@ -998,13 +1114,16 @@ function apresReservation(client, donnees) {
 
 async function annulerReservation() {
   const bouton = element('annuler-reservation');
-  const corps = {identifiant: vue.identifiant};
+  const corps = {
+    identifiant: vue.identifiant
+  };
   bouton.disabled = true;
   element('erreur-annulation').textContent = '';
   try {
     afficherClient(await appelerApi('/api/annuler', corps));
   } catch (erreur) {
-    if (!erreur.ignoree) element('erreur-annulation').textContent = erreur.message;
+    if (!erreur.ignoree)
+      element('erreur-annulation').textContent = erreur.message;
   } finally {
     bouton.disabled = false;
   }
@@ -1014,10 +1133,13 @@ async function annulerReservation() {
 
 function afficherClient(donnees) {
   retenirSessionEnLigne(donnees);
-  if (sessionFermee(donnees)) return;
-  if (donnees.etat === 'annulée') return afficherAnnulation(donnees);
+  if (sessionFermee(donnees))
+    return;
+  if (donnees.etat === 'annulée')
+    return afficherAnnulation(donnees);
   const afficher = AFFICHAGES[donnees.etat];
-  if (!afficher) return;
+  if (!afficher)
+    return;
   afficher(donnees);
   afficherSuivi(donnees);
   const close = ETATS_CLOS.includes(donnees.etat);
@@ -1025,7 +1147,10 @@ function afficherClient(donnees) {
 }
 
 /* Retour sur « Je veux surfer », avec le message d'annulation du cloud. */
-function afficherAnnulation({messages = [], session_id: session}) {
+function afficherAnnulation({
+  messages = [],
+  session_id: session
+}) {
   naviguer('pret');
   fermerSession(session);
   const dernier = messages[messages.length - 1];
@@ -1042,9 +1167,16 @@ function afficherSuivi(donnees) {
 }
 
 /* Une location reprise d'une station hors ligne peut n'avoir ni caution ni moyen. */
-function texteCaution({caution, paiement}) {
-  if (!caution) return '';
-  const {type, libelle} = paiement || {};
+function texteCaution({
+  caution,
+  paiement
+}) {
+  if (!caution)
+    return '';
+  const {
+    type,
+    libelle
+  } = paiement || {};
   const montant = 'Caution de ' + formaterEuros(caution.montant, 0);
   const lieu = type === 'crypto' ? 'sur Fuji' : 'en cours';
   const textes = {
@@ -1059,7 +1191,8 @@ function texteCaution({caution, paiement}) {
 
 function remplirListe(conteneur, elements, creer) {
   const signature = JSON.stringify(elements);
-  if (conteneur.dataset.signature === signature) return;
+  if (conteneur.dataset.signature === signature)
+    return;
   conteneur.dataset.signature = signature;
   conteneur.replaceChildren(...elements.map(creer));
 }
@@ -1085,7 +1218,10 @@ function afficherMessages(messages) {
   remplirListe(element('messages-liste'), recentsDabord, creerMessage);
 }
 
-function creerMessage({heure, texte}) {
+function creerMessage({
+  heure,
+  texte
+}) {
   const ligne = document.createElement('li');
   const moment = document.createElement('time');
   moment.textContent = heure;
@@ -1114,8 +1250,14 @@ function afficherCompteur(balise, duree, montant, estimation) {
   afficherEcran('en-cours');
 }
 
-function afficherCautionDebitee({caution, paiement}) {
-  const {montant: montantCaution, liens} = caution || {};
+function afficherCautionDebitee({
+  caution,
+  paiement
+}) {
+  const {
+    montant: montantCaution,
+    liens
+  } = caution || {};
   const montant = formaterEuros(montantCaution, 0);
   const sur = paiement ? ` sur ${paiement.libelle}` : '';
   element('debitee-detail').textContent = `Caution de ${montant} débitée${sur}.`;
@@ -1125,14 +1267,20 @@ function afficherCautionDebitee({caution, paiement}) {
 
 /* ---------- Reçu et état de la planche ---------- */
 
-function texteDebit({debite, montant, paiement}) {
-  if (debite == null) return formaterEuros(montant) + ' · débit en cours…';
+function texteDebit({
+  debite,
+  montant,
+  paiement
+}) {
+  if (debite == null)
+    return formaterEuros(montant) + ' · débit en cours…';
   const sur = paiement ? ' sur ' + paiement.libelle : '';
   return formaterEuros(debite) + sur;
 }
 
 function texteCautionRecu(caution) {
-  if (!caution) return '—';
+  if (!caution)
+    return '—';
   const enCours = caution.etat === 'bloquée' || caution.etat === 'en attente';
   return enCours ? 'libération en cours…' : caution.etat;
 }
@@ -1176,16 +1324,21 @@ function preparerRapport(sessionId) {
   basculerEnvoiRapport(false);
   element('valider-etat').disabled = true;
   element('erreur-etat').textContent = '';
-  for (const bouton of boutonsCondition()) marquerChoix(bouton, false);
+  for (const bouton of boutonsCondition())
+    marquerChoix(bouton, false);
 }
 
 function choisirCondition(bouton) {
-  if (vue.envoiCondition) return;
+  if (vue.envoiCondition)
+    return;
   vue.conditionChoisie = bouton.dataset.condition;
-  for (const autre of boutonsCondition()) marquerChoix(autre, autre === bouton);
+  for (const autre of boutonsCondition())
+    marquerChoix(autre, autre === bouton);
   element('valider-etat').disabled = false;
   element('erreur-etat').textContent = '';
 }
+
+/* ---------- Photo : sélection, file durable et résultat informatif ---------- */
 
 function erreurPhoto(message) {
   element('photo-error').textContent = message;
@@ -1193,9 +1346,11 @@ function erreurPhoto(message) {
 }
 
 function effacerPhoto(garderFichier = false) {
-  if (vue.photoPreviewUrl) URL.revokeObjectURL(vue.photoPreviewUrl);
+  if (vue.photoPreviewUrl)
+    URL.revokeObjectURL(vue.photoPreviewUrl);
   vue.photoPreviewUrl = null;
-  if (!garderFichier) element('photo').value = '';
+  if (!garderFichier)
+    element('photo').value = '';
   element('photo-preview').removeAttribute('src');
   element('photo-preview').hidden = true;
   element('note-photo').textContent = 'JPEG, PNG ou WebP, 8 Mo maximum.';
@@ -1208,8 +1363,14 @@ function effacerPhoto(garderFichier = false) {
 }
 
 function afficherResultatPhoto(resultat) {
-  if (!resultat || !['conforme', 'autre_planche', 'abimee', 'reprendre'].includes(resultat.statut)) return false;
-  const icones = {conforme: '✓', autre_planche: '!', abimee: '!', reprendre: '↻'};
+  if (!resultat || !['conforme', 'autre_planche', 'abimee', 'reprendre'].includes(resultat.statut))
+    return false;
+  const icones = {
+    conforme: '✓',
+    autre_planche: '!',
+    abimee: '!',
+    reprendre: '↻'
+  };
   const bloc = element('photo-result');
   bloc.className = 'photo-status result-' + resultat.statut;
   element('photo-result-icon').textContent = icones[resultat.statut];
@@ -1224,6 +1385,7 @@ function afficherResultatPhoto(resultat) {
   return true;
 }
 
+/* Une tâche retrouvée après rechargement reste suivie sans renvoyer la photo. */
 function afficherTachePhoto(tache) {
   if (!tache) {
     element('photo-pending').hidden = true;
@@ -1233,9 +1395,9 @@ function afficherTachePhoto(tache) {
   }
   vue.photoTaskId = tache.task_id;
   if (tache.status === 'pending' || tache.status === 'processing') {
-    element('photo-pending-message').textContent = tache.status === 'processing'
-      ? 'Photo reçue. Analyse en cours.'
-      : 'Photo reçue. Analyse en attente ; le cloud réessaiera si nécessaire.';
+    element('photo-pending-message').textContent = tache.status === 'processing' ?
+      'Photo reçue. Analyse en cours.' :
+      'Photo reçue. Analyse en attente ; le cloud réessaiera si nécessaire.';
     element('photo-pending').hidden = false;
     element('photo-result').hidden = true;
     element('submit-photo').hidden = true;
@@ -1251,9 +1413,10 @@ function afficherTachePhoto(tache) {
     element('photo-result').className = 'photo-status result-reprendre';
     element('photo-result-icon').textContent = '!';
     element('photo-result-title').textContent = 'Analyse interrompue';
-    element('photo-result-message').textContent = tache.error || 'Choisissez une photo et réessayez.';
-    element('retry-photo').textContent = element('photo').files[0]
-      ? 'Réessayer avec cette photo' : 'Choisir une photo et réessayer';
+    element('photo-result-message').textContent = tache.error ||
+      'Choisissez une photo et réessayez.';
+    element('retry-photo').textContent = element('photo').files[0] ?
+      'Réessayer avec cette photo' : 'Choisir une photo et réessayer';
     element('retry-photo').hidden = false;
     element('photo-pending').hidden = true;
     element('photo-result').hidden = false;
@@ -1267,7 +1430,8 @@ function afficherTachePhoto(tache) {
 function surPhotoChoisie() {
   const fichier = element('photo').files[0];
   effacerPhoto(true);
-  if (!fichier) return;
+  if (!fichier)
+    return;
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(fichier.type)) {
     erreurPhoto('Choisissez une photo JPEG, PNG ou WebP.');
     return;
@@ -1291,7 +1455,8 @@ function lirePhoto(fichier) {
   return new Promise((resolve, reject) => {
     const lecteur = new FileReader();
     lecteur.onload = () => resolve(lecteur.result);
-    lecteur.onerror = () => reject(new Error('Lecture de la photo impossible. Choisissez une autre image.'));
+    lecteur.onerror = () => reject(new Error(
+      'Lecture de la photo impossible. Choisissez une autre image.'));
     lecteur.readAsDataURL(fichier);
   });
 }
@@ -1303,9 +1468,11 @@ async function verifierServeurPhoto() {
   }
 }
 
+/** Dépose la photo ; le sondage client suit ensuite la tâche durable du serveur. */
 async function envoyerPhoto() {
   const fichier = element('photo').files[0];
-  if (!fichier || vue.photoEnvoi || !vue.sessionRecu || element('submit-photo').disabled) return;
+  if (!fichier || vue.photoEnvoi || !vue.sessionRecu || element('submit-photo').disabled)
+    return;
   const identifiant = vue.identifiant;
   const sessionId = vue.sessionRecu;
   const epoque = vue.epoque;
@@ -1319,12 +1486,17 @@ async function envoyerPhoto() {
   try {
     await verifierServeurPhoto();
     const image = await lirePhoto(fichier);
-    if (epoque !== vue.epoque || identifiant !== vue.identifiant || sessionId !== vue.sessionRecu) return;
+    if (epoque !== vue.epoque || identifiant !== vue.identifiant || sessionId !== vue.sessionRecu)
+      return;
     const donnees = await appelerApi('/api/photo-verification', {
-      identifiant, session_id: sessionId, task_id: vue.photoTaskId,
-      generation: vue.generation, image,
+      identifiant,
+      session_id: sessionId,
+      task_id: vue.photoTaskId,
+      generation: vue.generation,
+      image,
     });
-    if (!donnees.tache) throw new Error('Le cloud n’a pas confirmé la réception de la photo. Réessayez.');
+    if (!donnees.tache)
+      throw new Error('Le cloud n’a pas confirmé la réception de la photo. Réessayez.');
     vue.photoTaskId = donnees.tache.task_id;
     vue.photoRetrySession = null;
     afficherTachePhoto(donnees.tache);
@@ -1357,6 +1529,8 @@ function retenterPhoto() {
   }
 }
 
+/* ---------- Rapport d’état déclaré par le client ---------- */
+
 function basculerEnvoiRapport(enCours) {
   vue.envoiCondition = enCours;
   element('valider-etat').disabled = enCours;
@@ -1374,7 +1548,8 @@ function corpsRapport() {
 }
 
 async function envoyerRapport() {
-  if (!vue.conditionChoisie || vue.envoiCondition) return;
+  if (!vue.conditionChoisie || vue.envoiCondition)
+    return;
   basculerEnvoiRapport(true);
   try {
     await appelerApi('/api/condition', corpsRapport());
@@ -1382,7 +1557,8 @@ async function envoyerRapport() {
     element('merci-etat').hidden = false;
   } catch (erreur) {
     basculerEnvoiRapport(false);
-    if (erreur.ignoree) return;
+    if (erreur.ignoree)
+      return;
     element('erreur-etat').textContent =
       'Envoi impossible. Vous pouvez réessayer ou passer.';
   }
@@ -1406,7 +1582,8 @@ function brancherNavigation() {
 
 /* Hors ligne, recharger la page (servie par le cloud) mènerait à une page d'erreur. */
 function surLogo(evenement) {
-  if (vue.horsLigne) evenement.preventDefault();
+  if (vue.horsLigne)
+    evenement.preventDefault();
 }
 
 function brancherIdentification() {

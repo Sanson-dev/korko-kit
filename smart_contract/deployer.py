@@ -26,10 +26,14 @@ SOURCE = os.path.join(chaine.DOSSIER, "RegistreKorko.sol")
 def compiler():
     """Retourne l'ABI et le bytecode de RegistreKorko."""
     solcx.install_solc(VERSION_SOLC)
-    sortie = solcx.compile_files([SOURCE], output_values=["abi", "bin"],
-                                 solc_version=VERSION_SOLC,
-                                 evm_version=VERSION_EVM, optimize=True,
-                                 base_path=chaine.DOSSIER)
+    sortie = solcx.compile_files(
+        [SOURCE],
+        output_values=["abi", "bin"],
+        solc_version=VERSION_SOLC,
+        evm_version=VERSION_EVM,
+        optimize=True,
+        base_path=chaine.DOSSIER,
+    )
     contrat = next(iter(sortie.values()))
     return contrat["abi"], contrat["bin"]
 
@@ -38,8 +42,7 @@ def deployer(w3, abi, bytecode):
     """Déploie le contrat ; le compte qui déploie en devient propriétaire."""
     fabrique = w3.eth.contract(abi=abi, bytecode=bytecode)
     recu = chaine.attendre(w3, fabrique.constructor().transact())
-    return w3.eth.contract(address=recu.contractAddress, abi=abi,
-                           decode_tuples=True)
+    return w3.eth.contract(address=recu.contractAddress, abi=abi, decode_tuples=True)
 
 
 def inscrire_parc(registre, stations):
@@ -55,8 +58,7 @@ def inscrire_parc(registre, stations):
 def sauvegarder(registre):
     """Écrit l'adresse et l'ABI du contrat déployé."""
     with open(chaine.FICHIER_REGISTRE, "w", encoding="utf-8") as fichier:
-        json.dump({"adresse": registre.address, "abi": registre.abi},
-                  fichier, indent=1)
+        json.dump({"adresse": registre.address, "abi": registre.abi}, fichier, indent=1)
 
 
 def principal():

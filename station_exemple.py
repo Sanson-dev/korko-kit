@@ -24,24 +24,26 @@ from korko import Detecteur, lancer, planches_de
 
 # --- Paramétrage de la station et des fichiers de persistance ---
 CLOUD = os.environ.get("KORKO_CLOUD", "http://localhost:9000/evenements")
-JOURNAL_PATH = os.environ.get("KORKO_JOURNAL", os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "station_journal.ndjson"))
+JOURNAL_PATH = os.environ.get(
+    "KORKO_JOURNAL",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "station_journal.ndjson"),
+)
 MAX_REPLAY_PER_ATTEMPT = 20
 
-SEUIL = -80        # dBm : plus faible que ça, on ne compte pas la planche
-SILENCE = 10       # secondes sans paquet audible = la planche est partie
+SEUIL = -80  # dBm : plus faible que ça, on ne compte pas la planche
+SILENCE = 10  # secondes sans paquet audible = la planche est partie
 
 
 # --- État local et logique de détection ---
 class Station(Detecteur):
 
-    PERIODE_TIC = 1.0          # tic() toutes les secondes de flux
+    PERIODE_TIC = 1.0  # tic() toutes les secondes de flux
 
     def __init__(self):
-        self.vues = {}         # balise -> t du dernier paquet au-dessus du seuil
+        self.vues = {}  # balise -> t du dernier paquet au-dessus du seuil
         self.station = "A"
         self.journal = self.charger_journal()
-        self.cloud_ok = None   # pour ne signaler que les changements
+        self.cloud_ok = None  # pour ne signaler que les changements
         self.demarre = False
         print("station_exemple : décisions envoyées à %s" % CLOUD, file=sys.stderr)
 
@@ -74,31 +76,40 @@ class Station(Detecteur):
         dossier = os.path.dirname(os.path.abspath(JOURNAL_PATH))
         nom_temp = None
         try:
-            fd, nom_temp = tempfile.mkstemp(prefix=".station-journal-", dir=dossier, text=True)
+            fd, nom_temp = tempfile.mkstemp(
+                prefix=".station-journal-", dir=dossier, text=True
+            )
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 for ev in self.journal:
-                    f.write(json.dumps(ev, ensure_ascii=False, separators=(",", ":")) + "\n")
+                    f.write(
+                        json.dumps(ev, ensure_ascii=False, separators=(",", ":")) + "\n"
+                    )
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(nom_temp, JOURNAL_PATH)
             return True
         except OSError as e:
             if nom_temp:
-                try: os.unlink(nom_temp)
-                except OSError: pass
-            print("station_exemple : impossible de sauvegarder le journal (%s)" % e, file=sys.stderr)
+                try:
+                    os.unlink(nom_temp)
+                except OSError:
+                    pass
+            print(
+                "station_exemple : impossible de sauvegarder le journal (%s)" % e,
+                file=sys.stderr,
+            )
             return False
 
     # -- un paquet radio arrive -------------------------------------------
     def observation(self, o):
         self.station = o.station
-        if not self.demarre:                     # au démarrage, ses planches sont
-            self.demarre = True                  # supposées au râtelier : celle qui
-            for b in planches_de(o.station):     # reste muette sera déclarée partie
+        if not self.demarre:  # au démarrage, ses planches sont
+            self.demarre = True  # supposées au râtelier : celle qui
+            for b in planches_de(o.station):  # reste muette sera déclarée partie
                 self.vues[b] = o.t
-        if o.rssi < SEUIL:                       # trop loin : on ignore
+        if o.rssi < SEUIL:  # trop loin : on ignore
             return
-        if o.balise not in self.vues:            # on ne la voyait pas : elle rentre
+        if o.balise not in self.vues:  # on ne la voyait pas : elle rentre
             chez_elle = o.balise in planches_de(o.station)
             self.signaler("RETOUR" if chez_elle else "ETRANGERE", o.balise, o.t)
         self.vues[o.balise] = o.t
@@ -106,17 +117,18 @@ class Station(Detecteur):
     # -- appelée même quand plus rien n'arrive ----------------------------
     def tic(self, t):
         for balise, vue in list(self.vues.items()):
-            if t - vue > SILENCE:                # silence prolongé : elle est partie
+            if t - vue > SILENCE:  # silence prolongé : elle est partie
                 del self.vues[balise]
                 self.signaler("DEPART", balise, t)
         self.vider()
-        if not self.journal:                     # les TIC ne gonflent pas le journal
+        if not self.journal:  # les TIC ne gonflent pas le journal
             self.envoyer({"t": t, "station": self.station, "evenement": "TIC"})
 
     # -- sortie -----------------------------------------------------------
     def signaler(self, type_, balise, t):
-        {"DEPART": self.depart, "RETOUR": self.retour,
-         "ETRANGERE": self.etrangere}[type_](balise, t, self.station)
+        {"DEPART": self.depart, "RETOUR": self.retour, "ETRANGERE": self.etrangere}[
+            type_
+        ](balise, t, self.station)
         ev = {"t": t, "station": self.station, "balise": balise, "evenement": type_}
         ev["event_id"] = self.event_id(ev)
         self.journal.append(ev)
@@ -140,16 +152,26 @@ class Station(Detecteur):
         try:
             with urllib.request.urlopen(
                 urllib.request.Request(
-                    CLOUD, json.dumps(evenement).encode("utf-8"),
-                    {"Content-Type": "application/json"}), timeout=0.5) as response:
+                    CLOUD,
+                    json.dumps(evenement).encode("utf-8"),
+                    {"Content-Type": "application/json"},
+                ),
+                timeout=0.5,
+            ) as response:
                 ok = 200 <= response.status < 300
                 response.read()
         except Exception:
             ok = False
-        if ok != self.cloud_ok:                  # on ne prévient qu'au changement
-            print("station_exemple : cloud %s" % ("joint" if ok else
-                  "injoignable, les événements sont gardés au journal"),
-                  file=sys.stderr)
+        if ok != self.cloud_ok:  # on ne prévient qu'au changement
+            print(
+                "station_exemple : cloud %s"
+                % (
+                    "joint"
+                    if ok
+                    else "injoignable, les événements sont gardés au journal"
+                ),
+                file=sys.stderr,
+            )
             self.cloud_ok = ok
         return ok
 

@@ -29,9 +29,16 @@ def lister(registre):
     for numero in sorted(fonctions.listerPlanches().call()):
         planche = fonctions.lirePlanche(numero).call()
         etat = "en mer" if planche.enMer else "au râtelier"
-        print("%s  base %s  %-11s  vue en %s  départs %d"
-              % (chaine.balise(numero), planche.stationOrigine, etat,
-                 planche.derniereStation, planche.nombreDeparts))
+        print(
+            "%s  base %s  %-11s  vue en %s  départs %d"
+            % (
+                chaine.balise(numero),
+                planche.stationOrigine,
+                etat,
+                planche.derniereStation,
+                planche.nombreDeparts,
+            )
+        )
 
 
 def modifier(registre, appel):
@@ -46,8 +53,7 @@ def modifier(registre, appel):
 
 def lire_arguments():
     """Retourne la commande tapée et ses arguments."""
-    analyseur = argparse.ArgumentParser(
-        description="Parc KORKO sur la blockchain.")
+    analyseur = argparse.ArgumentParser(description="Parc KORKO sur la blockchain.")
     commandes = analyseur.add_subparsers(dest="commande", required=True)
     commandes.add_parser("lister")
     for nom in ("ajouter-station", "retirer-station"):

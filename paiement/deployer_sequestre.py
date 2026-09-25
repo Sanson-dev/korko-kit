@@ -25,10 +25,14 @@ def compiler():
     """Retourne l'ABI et le bytecode de SequestreKorko."""
     solcx.install_solc(VERSION_SOLC)
     chemin = os.path.join(crypto.DOSSIER, SOURCE)
-    sortie = solcx.compile_files([chemin], output_values=["abi", "bin"],
-                                 solc_version=VERSION_SOLC,
-                                 evm_version=VERSION_EVM, optimize=True,
-                                 base_path=crypto.DOSSIER)
+    sortie = solcx.compile_files(
+        [chemin],
+        output_values=["abi", "bin"],
+        solc_version=VERSION_SOLC,
+        evm_version=VERSION_EVM,
+        optimize=True,
+        base_path=crypto.DOSSIER,
+    )
     contrat = sortie["%s:SequestreKorko" % SOURCE]
     return contrat["abi"], contrat["bin"]
 
@@ -36,8 +40,9 @@ def compiler():
 def sauvegarder(sequestre):
     """Écrit l'adresse et l'ABI du contrat déployé."""
     with open(crypto.FICHIER_SEQUESTRE, "w", encoding="utf-8") as fichier:
-        json.dump({"adresse": sequestre.address, "abi": sequestre.abi},
-                  fichier, indent=1)
+        json.dump(
+            {"adresse": sequestre.address, "abi": sequestre.abi}, fichier, indent=1
+        )
 
 
 def principal():

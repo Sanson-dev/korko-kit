@@ -20,8 +20,9 @@ import sqlite3
 from contextlib import closing
 
 DOSSIER_PROJET = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE = os.environ.get("KORKO_CLOUD_DB",
-                      os.path.join(DOSSIER_PROJET, "korko_cloud.sqlite3"))
+BASE = os.environ.get(
+    "KORKO_CLOUD_DB", os.path.join(DOSSIER_PROJET, "korko_cloud.sqlite3")
+)
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS blockchain_outbox (
     rang INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,15 +40,20 @@ def identifiant(evenement):
     """Retourne l'event_id de l'événement, comme sur la branche de Sanson."""
     cles = ("station", "evenement", "balise", "t")
     texte = "\0".join(str(evenement.get(cle, "")) for cle in cles)
-    return (evenement.get("event_id")
-            or hashlib.sha256(texte.encode("utf-8")).hexdigest())
+    return (
+        evenement.get("event_id") or hashlib.sha256(texte.encode("utf-8")).hexdigest()
+    )
 
 
 def envoi(ligne):
     """Retourne un envoi : l'événement, et sa signature s'il en a une."""
     event_id, evenement, nonce, brut = ligne
-    return {"event_id": event_id, "evenement": json.loads(evenement),
-            "nonce": nonce, "brut": brut}
+    return {
+        "event_id": event_id,
+        "evenement": json.loads(evenement),
+        "nonce": nonce,
+        "brut": brut,
+    }
 
 
 class BoiteEnvoi:
@@ -67,26 +73,32 @@ class BoiteEnvoi:
 
     def deposer(self, evenement):
         """Garde l'événement ; retourne son envoi, ou None s'il est connu."""
-        ligne = (identifiant(evenement),
-                 json.dumps(evenement, ensure_ascii=False))
+        ligne = (identifiant(evenement), json.dumps(evenement, ensure_ascii=False))
         ajoutes, _ = self.executer(
             "INSERT OR IGNORE INTO blockchain_outbox(event_id, evenement) "
-            "VALUES (?, ?)", ligne)
+            "VALUES (?, ?)",
+            ligne,
+        )
         return envoi(ligne + (None, None)) if ajoutes else None
 
     def en_attente(self):
         """Retourne les envois pas encore inscrits, dans l'ordre d'arrivée."""
         _, lignes = self.executer(
             "SELECT %s FROM blockchain_outbox WHERE statut = 'en attente' "
-            "ORDER BY rang" % COLONNES)
+            "ORDER BY rang" % COLONNES
+        )
         return [envoi(ligne) for ligne in lignes]
 
     def signer(self, event_id, nonce, brut):
         """Garde la transaction signée (ou l'oublie, avec None)."""
-        self.executer("UPDATE blockchain_outbox SET nonce = ?, brut = ? "
-                      "WHERE event_id = ?", (nonce, brut, event_id))
+        self.executer(
+            "UPDATE blockchain_outbox SET nonce = ?, brut = ? " "WHERE event_id = ?",
+            (nonce, brut, event_id),
+        )
 
     def clore(self, event_id, statut, preuve):
         """Sort l'événement de l'attente : inscrit, refusé, ignoré…"""
-        self.executer("UPDATE blockchain_outbox SET statut = ?, preuve = ? "
-                      "WHERE event_id = ?", (statut, preuve, event_id))
+        self.executer(
+            "UPDATE blockchain_outbox SET statut = ?, preuve = ? " "WHERE event_id = ?",
+            (statut, preuve, event_id),
+        )

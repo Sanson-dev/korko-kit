@@ -21,8 +21,12 @@ import time
 from eth_account import Account
 from eth_utils import abi_to_signature, function_signature_to_4byte_selector
 from web3 import Web3
-from web3.exceptions import (ContractLogicError, TimeExhausted,
-                             TransactionNotFound, Web3RPCError)
+from web3.exceptions import (
+    ContractLogicError,
+    TimeExhausted,
+    TransactionNotFound,
+    Web3RPCError,
+)
 from web3.middleware import SignAndSendRawMiddlewareBuilder
 
 from smart_contract.boite_envoi import BoiteEnvoi
@@ -33,9 +37,9 @@ DOSSIER = os.path.dirname(os.path.abspath(__file__))
 FICHIER_CLE = os.path.join(DOSSIER, ".env")
 FICHIER_REGISTRE = os.path.join(DOSSIER, "registre_korko.json")
 PREFIXE_BALISE = "korko-"
-DELAI_RPC = 10         # secondes avant d'abandonner une requête à Fuji
-DELAI_RECU = 120       # secondes d'attente maximale d'une confirmation
-PAUSE_RESEAU = 5       # secondes avant de réessayer si Fuji est injoignable
+DELAI_RPC = 10  # secondes avant d'abandonner une requête à Fuji
+DELAI_RECU = 120  # secondes d'attente maximale d'une confirmation
+PAUSE_RESEAU = 5  # secondes avant de réessayer si Fuji est injoignable
 
 #: Fuji injoignable, réponse d'erreur du nœud, ou page HTML d'un portail wifi
 ERREURS_RESEAU = (OSError, Web3RPCError, json.JSONDecodeError)
@@ -76,8 +80,7 @@ def connecter_web3(fournisseur, compte):
 
 def connecter_fuji():
     """Retourne un client Web3 branché sur Fuji avec le compte du cloud."""
-    fournisseur = Web3.HTTPProvider(RPC_FUJI,
-                                    request_kwargs={"timeout": DELAI_RPC})
+    fournisseur = Web3.HTTPProvider(RPC_FUJI, request_kwargs={"timeout": DELAI_RPC})
     return connecter_web3(fournisseur, compte_du_cloud())
 
 
@@ -85,8 +88,9 @@ def ouvrir_registre(w3):
     """Retourne le contrat déployé, décrit par registre_korko.json."""
     with open(FICHIER_REGISTRE, encoding="utf-8") as fichier:
         deploiement = json.load(fichier)
-    return w3.eth.contract(address=deploiement["adresse"],
-                           abi=deploiement["abi"], decode_tuples=True)
+    return w3.eth.contract(
+        address=deploiement["adresse"], abi=deploiement["abi"], decode_tuples=True
+    )
 
 
 def connecter():
@@ -96,8 +100,7 @@ def connecter():
 
 def attendre(w3, hash_transaction):
     """Attend la confirmation ; lève TransactionAnnulee si elle échoue."""
-    recu = w3.eth.wait_for_transaction_receipt(hash_transaction,
-                                               timeout=DELAI_RECU)
+    recu = w3.eth.wait_for_transaction_receipt(hash_transaction, timeout=DELAI_RECU)
     if recu.status != 1:
         raise TransactionAnnulee(hash_transaction.to_0x_hex())
     return recu
@@ -153,8 +156,7 @@ def lire_parc(registre, secours):
     try:
         return lire_parc_du_contrat(registre)
     except ERREURS_RESEAU as erreur:
-        print("CHAÎNE injoignable, parc de secours : %s" % erreur,
-              file=sys.stderr)
+        print("CHAÎNE injoignable, parc de secours : %s" % erreur, file=sys.stderr)
         return {b: code for code, balises in secours.items() for b in balises}
 
 
@@ -165,8 +167,11 @@ def creer_publieur(registre, journaliser):
 
 def resumer(evenement):
     """« DEPART korko-01 en A » : l'événement en quelques mots."""
-    return "%s %s en %s" % (evenement.get("evenement"),
-                            evenement.get("balise"), evenement.get("station"))
+    return "%s %s en %s" % (
+        evenement.get("evenement"),
+        evenement.get("balise"),
+        evenement.get("station"),
+    )
 
 
 def empreinte(envoi):
@@ -175,11 +180,13 @@ def empreinte(envoi):
 
 
 #: ligne du journal selon l'issue d'un envoi
-MESSAGES = {"inscrit": "CHAÎNE %s : %s",
-            "refusé": "CHAÎNE refus : %s (%s)",
-            "annulée": "CHAÎNE annulée : %s : %s",
-            "non confirmée": "CHAÎNE non confirmée : %s : %s",
-            "ignoré": "CHAÎNE ignoré : %s (%s)"}
+MESSAGES = {
+    "inscrit": "CHAÎNE %s : %s",
+    "refusé": "CHAÎNE refus : %s (%s)",
+    "annulée": "CHAÎNE annulée : %s : %s",
+    "non confirmée": "CHAÎNE non confirmée : %s : %s",
+    "ignoré": "CHAÎNE ignoré : %s (%s)",
+}
 
 
 class Publieur(threading.Thread):
@@ -200,7 +207,7 @@ class Publieur(threading.Thread):
         self.journaliser = journaliser
         self.file = queue.Queue()
         self.dernier_incident = None
-        for envoi in boite.en_attente():   # repris après un redémarrage
+        for envoi in boite.en_attente():  # repris après un redémarrage
             self.file.put(envoi)
 
     def publier(self, evenement):
@@ -239,8 +246,9 @@ class Publieur(threading.Thread):
             return True
         except ERREURS_RESEAU as erreur:
             if not self.deja_envoyee(envoi):
-                self.signaler_incident("CHAÎNE en échec : %s (%s)"
-                                       % (resumer(envoi["evenement"]), erreur))
+                self.signaler_incident(
+                    "CHAÎNE en échec : %s (%s)" % (resumer(envoi["evenement"]), erreur)
+                )
                 return False
         self.dernier_incident = None
         self.confirmer(envoi)
@@ -251,7 +259,8 @@ class Publieur(threading.Thread):
         adresse = self.compte.address
         nonce = self.registre.w3.eth.get_transaction_count(adresse, "pending")
         transaction = self.appel_pour(envoi["evenement"]).build_transaction(
-            {"from": adresse, "nonce": nonce})
+            {"from": adresse, "nonce": nonce}
+        )
         signee = self.compte.sign_transaction(transaction)
         envoi["nonce"] = nonce
         envoi["brut"] = signee.raw_transaction.to_0x_hex()
@@ -292,8 +301,7 @@ class Publieur(threading.Thread):
     def clore(self, envoi, statut, preuve):
         """Sort l'envoi de l'attente et le journalise."""
         self.boite.clore(envoi["event_id"], statut, preuve)
-        self.journaliser(MESSAGES[statut]
-                         % (resumer(envoi["evenement"]), preuve))
+        self.journaliser(MESSAGES[statut] % (resumer(envoi["evenement"]), preuve))
 
     def signaler_incident(self, message):
         """Journalise un incident une seule fois, pas à chaque essai."""
@@ -304,9 +312,16 @@ class Publieur(threading.Thread):
     def appel_pour(self, evenement):
         """Un DEPART s'inscrit en départ ; un RETOUR ou une ETRANGERE
         (planche rendue à une autre station) en retour."""
+        # Le registre atteste le mouvement physique. Cette inscription d’une
+        # ETRANGERE ne clôture pas la location, gérée séparément par le cloud.
         fonctions = self.registre.functions
-        enregistrer = (fonctions.enregistrerDepart
-                       if evenement["evenement"] == "DEPART"
-                       else fonctions.enregistrerRetour)
-        return enregistrer(numero(evenement["balise"]), evenement["station"],
-                           round(evenement["t"] * 1000))
+        enregistrer = (
+            fonctions.enregistrerDepart
+            if evenement["evenement"] == "DEPART"
+            else fonctions.enregistrerRetour
+        )
+        return enregistrer(
+            numero(evenement["balise"]),
+            evenement["station"],
+            round(evenement["t"] * 1000),
+        )

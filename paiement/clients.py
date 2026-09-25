@@ -52,11 +52,16 @@ def carte(recu):
     derniers4 = str(recu.get("derniers4", ""))
     expiration = str(recu.get("expiration", ""))
     if not re.fullmatch(r"[0-9]{4}", derniers4) or not re.fullmatch(
-            r"(0[1-9]|1[0-2])/[0-9]{2}", expiration):
+        r"(0[1-9]|1[0-2])/[0-9]{2}", expiration
+    ):
         raise ErreurFiche("Carte incomplète.")
     marque = marque[:20] or "Carte"
-    return {"type": "carte", "libelle": "%s •••• %s" % (marque, derniers4),
-            "derniers4": derniers4, "expiration": expiration}
+    return {
+        "type": "carte",
+        "libelle": "%s •••• %s" % (marque, derniers4),
+        "derniers4": derniers4,
+        "expiration": expiration,
+    }
 
 
 class Fichier:
@@ -82,8 +87,9 @@ class Fichier:
         appareil = client.get("appareil")
         appareils = fiche.get("appareils", [])
         if moyen.get("type") == "enregistre" and appareil not in appareils:
-            raise ErreurFiche("Pour votre sécurité, choisissez à nouveau "
-                              "votre moyen de paiement.")
+            raise ErreurFiche(
+                "Pour votre sécurité, choisissez à nouveau " "votre moyen de paiement."
+            )
         fiche["moyen"] = self.moyen_de_paiement(fiche, moyen)
         if moyen.get("type") != "enregistre":
             # un nouveau moyen ne resert que depuis le téléphone qui l'a saisi
@@ -116,8 +122,9 @@ class Fichier:
         archivé dans la fiche, pour ne perdre aucune clé)."""
         if nouveau and "portefeuille" in fiche:
             ancien = fiche.pop("portefeuille")
-            fiche["anciens_portefeuilles"] = (
-                fiche.get("anciens_portefeuilles", []) + [ancien])
+            fiche["anciens_portefeuilles"] = fiche.get("anciens_portefeuilles", []) + [
+                ancien
+            ]
         if "portefeuille" not in fiche:
             fiche["portefeuille"] = crypto.creer_portefeuille()
         adresse = fiche["portefeuille"]["adresse"]
@@ -126,8 +133,14 @@ class Fichier:
 
     def par_appareil(self, appareil):
         """Retourne la fiche du client qui utilise ce téléphone, ou None."""
-        return next((fiche for fiche in self.fiches.values()
-                     if appareil in fiche.get("appareils", [])), None)
+        return next(
+            (
+                fiche
+                for fiche in self.fiches.values()
+                if appareil in fiche.get("appareils", [])
+            ),
+            None,
+        )
 
     def ajouter_location(self, telephone, location):
         """Ajoute une location terminée à l'historique du client."""
@@ -136,8 +149,9 @@ class Fichier:
 
     def lister(self):
         """Retourne les fiches, triées par nom puis prénom."""
-        return sorted(self.fiches.values(),
-                      key=lambda fiche: (fiche["nom"], fiche["prenom"]))
+        return sorted(
+            self.fiches.values(), key=lambda fiche: (fiche["nom"], fiche["prenom"])
+        )
 
     def sauvegarder(self):
         """Écrit toutes les fiches, d'un seul coup, dans clients.json."""
