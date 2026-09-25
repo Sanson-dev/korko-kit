@@ -52,6 +52,8 @@ def planches_de(station):
 MES_PLANCHES = STATIONS["A"]
 
 Observation = namedtuple("Observation", "t station balise rssi")
+Battement = namedtuple("Battement", "t station")
+Reinitialisation = namedtuple("Reinitialisation", "t station")
 
 
 # --------------------------------------------------------------------------
@@ -76,6 +78,9 @@ class Detecteur:
         n'émet plus rien vers la station, donc observation() ne sera
         jamais rappelée pour elle.
         """
+
+    def reinitialisation_flux(self, t, station="A"):
+        """Appelée quand la source repart avec une nouvelle ligne de temps."""
 
     # -- à appeler depuis ton code -----------------------------------------
 
@@ -152,6 +157,12 @@ def source_reseau(adresse, timeout=0.25):
                 try:
                     d = json.loads(ligne)
                 except ValueError:
+                    continue
+                if d.get("evenement") == "RESET" and "t" in d:
+                    yield Reinitialisation(d["t"], d.get("station", "A"))
+                    continue
+                if d.get("evenement") == "TIC" and "t" in d:
+                    yield Battement(d["t"], d.get("station", "A"))
                     continue
                 if "rssi" in d:
                     yield Observation(d["t"], d.get("station", "A"),
@@ -249,11 +260,12 @@ def _boucle(detecteur, flux, temps_reel, verbeux):
     """Consomme un flux d'Observations (ou None) et cadence les tics."""
     prochain_tic = None
     dernier_t = None
+    horloge_source = False
     depart_mur = time.monotonic()
 
     for o in flux:
         if o is None:
-            if dernier_t is None:
+            if dernier_t is None or horloge_source:
                 continue
             if temps_reel:
                 t = dernier_t + (time.monotonic() - depart_mur)
@@ -261,8 +273,23 @@ def _boucle(detecteur, flux, temps_reel, verbeux):
                 continue
         else:
             t = o.t
+            if isinstance(o, Reinitialisation):
+                reset = getattr(detecteur, "reinitialisation_flux", None)
+                if reset is not None:
+                    reset(t, o.station)
+                prochain_tic = t
+                horloge_source = True
+            elif dernier_t is not None and t < dernier_t:
+                # Un nouveau scénario repart à t=0. Recaler aussi le tic,
+                # sinon il resterait bloqué à l'ancienne ligne de temps.
+                reset = getattr(detecteur, "reinitialisation_flux", None)
+                if reset is not None:
+                    reset(t, o.station)
+                prochain_tic = t
             dernier_t = o.t
             depart_mur = time.monotonic()
+            if isinstance(o, (Battement, Reinitialisation)):
+                horloge_source = True
 
         if prochain_tic is None:
             prochain_tic = t
@@ -271,7 +298,7 @@ def _boucle(detecteur, flux, temps_reel, verbeux):
             detecteur.tic(prochain_tic)
             prochain_tic += detecteur.PERIODE_TIC
 
-        if o is not None:
+        if isinstance(o, Observation):
             if verbeux:
                 print(f"    {o.t:9.1f}  {o.balise}  {o.rssi:4d} dBm",
                       file=sys.stderr)

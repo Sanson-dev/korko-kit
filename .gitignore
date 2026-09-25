@@ -1,8 +1,20 @@
 korko_cloud.sqlite3
 station_journal.ndjson
 station_offline_state.json
-__pycache__/
-*.pyc
-*:Zone.Identifier
 
+# Données d'exécution KORKO : file d'analyses et photos en attente
+korko-data/
+*.sqlite
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3.pending/
+*.db
+*.db-wal
+*.db-shm
+*.db.pending/
+
+__pycache__/
+*.py[cod]
+*:Zone.Identifier
 .venv/

@@ -16,6 +16,7 @@ Copiez-le en ma_station.py, et attaquez.
 import json
 import os
 import sys
+import time
 import urllib.request
 import hashlib
 import hmac
@@ -68,7 +69,8 @@ class Station(Detecteur):
             self.local_states.update(saved.get("local_states", {}))
             self.maintenance.update(saved.get("maintenance", []))
             self.offline_reservations.update(saved.get("offline_reservations", {}))
-        except FileNotFoundError: pass
+        except FileNotFoundError:
+            pass
         for ev in self.journal:
             if ev.get("evenement") == "OFFLINE_RESERVATION":
                 self.offline_reservations[ev["offline_reservation_id"]] = ev
@@ -77,14 +79,17 @@ class Station(Detecteur):
                 self.local_states[ev.get("balise")] = "en mer"
                 for reservation in self.offline_reservations.values():
                     if reservation.get("balise") == ev.get("balise"):
-                        reservation["status"] = "EN_COURS"; reservation["depart_t"] = ev.get("t")
+                        reservation["status"] = "EN_COURS"
+                        reservation["depart_t"] = ev.get("t")
             elif ev.get("evenement") == "RETOUR":
                 self.local_states[ev.get("balise")] = "au râtelier"
                 for reservation in self.offline_reservations.values():
                     if reservation.get("balise") == ev.get("balise"):
-                        reservation["status"] = "TERMINEE"; reservation["retour_t"] = ev.get("t")
+                        reservation["status"] = "TERMINEE"
+                        reservation["retour_t"] = ev.get("t")
             elif ev.get("evenement") == "ETRANGERE":
                 self.local_states[ev.get("balise")] = "A_REEQUILIBRER"
+        self.dernier_tic_cloud = None
         print("station_exemple : décisions envoyées à %s" % CLOUD, file=sys.stderr)
 
     # -- un paquet radio arrive -------------------------------------------
@@ -102,6 +107,15 @@ class Station(Detecteur):
             self.signaler("RETOUR" if chez_elle else "ETRANGERE", o.balise, o.t)
         self.vues[o.balise] = o.t
 
+    def reinitialisation_flux(self, t, station="A"):
+        """Oublie l'ancienne scène et demande au cloud de repartir à zéro."""
+        self.vues.clear()
+        self.demarre = False
+        self.station = station
+        self.journal.clear()
+        self.dernier_tic_cloud = None
+        self.envoyer({"t": t, "station": station, "evenement": "RESET"})
+
     # -- appelée même quand plus rien n'arrive ----------------------------
     def tic(self, t):
         self.current_t = max(self.current_t, float(t))
@@ -109,8 +123,12 @@ class Station(Detecteur):
             if t - vue > SILENCE:                # silence prolongé : elle est partie
                 del self.vues[balise]
                 self.signaler("DEPART", balise, t)
-        if self.vider():                         # cloud à jour : il peut avancer
-            self.envoyer({"t": t, "station": self.station, "evenement": "TIC"})
+        if self.vider():                         # cadence cloud à l'horloge de la source
+            maintenant = time.monotonic()
+            if (self.dernier_tic_cloud is None or
+                    maintenant - self.dernier_tic_cloud >= 1.0):
+                self.envoyer({"t": t, "station": self.station, "evenement": "TIC"})
+                self.dernier_tic_cloud = maintenant
 
     # -- sortie -----------------------------------------------------------
     def signaler(self, type_, balise, t):
@@ -156,11 +174,12 @@ class Station(Detecteur):
 
     def envoyer(self, evenement):
         try:
-            urllib.request.urlopen(
+            with urllib.request.urlopen(
                 urllib.request.Request(
                     CLOUD, json.dumps(evenement).encode("utf-8"),
-                    {"Content-Type": "application/json"}), timeout=0.5)
-            ok = True
+                    {"Content-Type": "application/json"}), timeout=0.5) as response:
+                ok = 200 <= response.status < 300
+                response.read()
         except Exception:
             ok = False
         if ok != self.cloud_ok:                  # on ne prévient qu'au changement

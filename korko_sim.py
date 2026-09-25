@@ -561,6 +561,47 @@ class Diffuseur:
                 except OSError:
                     pass
 
+    def battement(self, t, station="A"):
+        """Diffuse l'horloge simulée, y compris quand aucune balise n'émet."""
+        seconde = int(t)
+        if getattr(self, "_seconde", None) == seconde:
+            return
+        self._seconde = seconde
+        blob = (json.dumps({"t": round(t, 3), "station": station,
+                            "evenement": "TIC"}) + "\n").encode()
+        with self.verrou:
+            morts = []
+            for c in self.clients:
+                try:
+                    c.sendall(blob)
+                except OSError:
+                    morts.append(c)
+            for c in morts:
+                self.clients.remove(c)
+                try:
+                    c.close()
+                except OSError:
+                    pass
+
+    def reinitialiser_flux(self, t, station="A"):
+        """Marque un changement de scène pour les lecteurs du flux TCP."""
+        self._seconde = int(t) - 1
+        blob = (json.dumps({"t": round(t, 3), "station": station,
+                            "evenement": "RESET"}) + "\n").encode()
+        with self.verrou:
+            morts = []
+            for c in self.clients:
+                try:
+                    c.sendall(blob)
+                except OSError:
+                    morts.append(c)
+            for c in morts:
+                self.clients.remove(c)
+                try:
+                    c.close()
+                except OSError:
+                    pass
+
     @property
     def nombre(self):
         with self.verrou:
@@ -1020,7 +1061,7 @@ def servir(sim, diffuseur):
                                              "etat": etat}, ensure_ascii=False)
                         self.wfile.write(b"data: " + charge.encode() + b"\n\n")
                         self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
+                except OSError:
                     pass
             else:
                 self._entete("text/plain", 404)
@@ -1036,7 +1077,10 @@ def servir(sim, diffuseur):
                     self._json(sim.enr_fin() or {"ok": False})
                 return
             try:
-                sim.cmd(d.get("action"), d.get("balise"), d.get("valeur"))
+                action = d.get("action")
+                sim.cmd(action, d.get("balise"), d.get("valeur"))
+                if action in ("manuel", "scenario", "trace", "recommencer"):
+                    diffuseur.reinitialiser_flux(sim.t, sim.station)
                 self._json({"ok": True})
             except Exception as e:                       # noqa: BLE001
                 self._json({"ok": False, "erreur": str(e)})
@@ -1067,6 +1111,7 @@ def principal():
                 if obs:
                     diffuseur.envoyer(obs)
                     sim.empiler(obs)
+                diffuseur.battement(sim.t, sim.station)
             prochain += PAS / max(sim.vitesse, 0.01)
             retard = prochain - time.monotonic()
             if retard > 0:
