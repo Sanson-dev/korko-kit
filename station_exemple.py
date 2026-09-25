@@ -22,6 +22,7 @@ import urllib.request
 
 from korko import Detecteur, lancer, planches_de
 
+# --- Paramétrage de la station et des fichiers de persistance ---
 CLOUD = os.environ.get("KORKO_CLOUD", "http://localhost:9000/evenements")
 JOURNAL_PATH = os.environ.get("KORKO_JOURNAL", os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "station_journal.ndjson"))
@@ -31,6 +32,7 @@ SEUIL = -80        # dBm : plus faible que ça, on ne compte pas la planche
 SILENCE = 10       # secondes sans paquet audible = la planche est partie
 
 
+# --- État local et logique de détection ---
 class Station(Detecteur):
 
     PERIODE_TIC = 1.0          # tic() toutes les secondes de flux

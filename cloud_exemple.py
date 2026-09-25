@@ -18,6 +18,7 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
+# --- Paramètres du cloud et du parc ---
 PORT = 9000
 
 TARIF_MIN = 0.20          # € la minute
@@ -42,6 +43,7 @@ signes = {}            # station -> t de son dernier message
 
 
 # ---------------------------------------------------------------- outils
+# Ce bloc centralise les fonctions de journalisation et de calcul de durée.
 
 def duree_txt(s):
     s = int(s)
@@ -67,6 +69,7 @@ def suggestion(station):
 
 
 # ------------------------------------------------------------- décisions
+# Ici, on transforme les événements de stations en changements d'état du parc.
 
 def cloturer(balise, station, t, hors_base):
     p = planches[balise]

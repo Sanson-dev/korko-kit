@@ -31,6 +31,7 @@ STATE_PATH = os.environ.get("KORKO_STATION_STATE", os.path.join(os.path.dirname(
 
 from korko import Detecteur, lancer, planches_de
 
+# --- Configuration de la station et de l'API hors ligne ---
 CLOUD = os.environ.get("KORKO_CLOUD", "http://localhost:9000/evenements")
 LOCAL_PORT = int(os.environ.get("KORKO_OFFLINE_PORT", "9100"))
 OFFLINE_SECRET = os.environ.get("KORKO_OFFLINE_SECRET", "korko-hackathon-offline-secret")
@@ -41,6 +42,7 @@ SEUIL = -80        # dBm : plus faible que ça, on ne compte pas la planche
 SILENCE = 10       # secondes sans paquet audible = la planche est partie
 
 
+# --- État local et logique de détection ---
 class Station(Detecteur):
 
     PERIODE_TIC = 1.0          # tic() toutes les secondes de flux

@@ -28,6 +28,7 @@ from collections import namedtuple
 VERSION = "1.1"
 PORT_DEFAUT = 8420
 
+# --- Configuration du parc KORKO ---
 #: à quelle station appartient chaque planche. C'est une table de
 #: configuration, pas une déduction faite sur le signal : une planche
 #: appartient à un râtelier et doit y revenir.
@@ -56,6 +57,8 @@ Observation = namedtuple("Observation", "t station balise rssi")
 # --------------------------------------------------------------------------
 # La classe à hériter
 # --------------------------------------------------------------------------
+# Cette couche fournit le contrat minimal entre le matériel radio et le
+# logique métier : on reçoit des observations, on émet des événements.
 
 class Detecteur:
     """Hérite de cette classe, implémente observation() et tic()."""
@@ -104,6 +107,8 @@ class Detecteur:
 # --------------------------------------------------------------------------
 # Les sources
 # --------------------------------------------------------------------------
+# La source transforme un flux brut en observations exploitables, qu'elles
+# viennent d'un fichier de traces ou d'un réseau TCP.
 
 def source_fichier(chemin):
     """Rejoue un fichier de traces au format contrat."""
@@ -158,6 +163,8 @@ def source_reseau(adresse, timeout=0.25):
 # --------------------------------------------------------------------------
 # Le scoreur
 # --------------------------------------------------------------------------
+# Outil de validation : compare les prédictions de la station à la vérité
+# terrain pour mesurer la qualité de détection.
 
 #: un DEPART prédit est juste s'il tombe entre l'instant réel et +5 minutes
 TOLERANCE_DEPART = 300.0
@@ -236,6 +243,7 @@ def afficher_score(s):
 # --------------------------------------------------------------------------
 # La boucle
 # --------------------------------------------------------------------------
+# La boucle fait avancer le temps et appelle tic() à cadence fixe.
 
 def _boucle(detecteur, flux, temps_reel, verbeux):
     """Consomme un flux d'Observations (ou None) et cadence les tics."""
