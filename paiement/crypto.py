@@ -29,7 +29,6 @@ DOSSIER = os.path.dirname(os.path.abspath(__file__))
 FICHIER_SEQUESTRE = os.path.join(DOSSIER, "sequestre_korko.json")
 GAZ_BLOQUER = 100_000   # limite de gaz du blocage (≈ 68 000 consommés)
 GAZ_VIREMENT = 21_000   # gaz d'un simple virement d'AVAX
-GAZ_REGLEMENT = 100_000 # limite de gaz pour cloturer/saisir une caution
 
 #: le virement d'approvisionnement reprend le réseau et les frais du blocage
 CHAMPS_REPRIS = ("chainId", "maxFeePerGas", "maxPriorityFeePerGas")
@@ -78,6 +77,13 @@ def demarrer(journaliser):
     sequestre = Sequestre(contrat, chaine.compte_du_cloud(), journaliser)
     sequestre.start()
     return sequestre
+
+
+def confirmer_seul(envoi):
+    """Confirme l'envoi sans que le registre signe en même temps : les deux
+    fils partagent le compte du cloud, donc ses nonces."""
+    with chaine.VERROU_CLOUD:
+        return envoi.confirmer()
 
 
 class Envoi:
@@ -243,8 +249,7 @@ class Sequestre(threading.Thread):
         else:
             appel = fonctions.cloturer(reference, en_wei(montant))
             etat = "libérée"
-        options = {"from": self.korko.address, "gas": GAZ_REGLEMENT}
-        self.insister(appel.call, options)
+        options = {"from": self.korko.address}
         transaction = self.insister(appel.build_transaction, options)
         hash_transaction = self.transmettre(self.korko, transaction)
         autorisation.debite = montant
@@ -260,7 +265,8 @@ class Sequestre(threading.Thread):
 
     def transmettre(self, compte, transaction):
         """Envoie la transaction, signée une seule fois ; retourne son hash."""
-        return self.insister(Envoi(self.w3, compte, transaction).confirmer)
+        return self.insister(confirmer_seul, Envoi(self.w3, compte,
+                                                   transaction))
 
     def insister(self, action, *arguments):
         """Retourne le résultat de l'action, réessayée sur une des ATTENTES."""

@@ -1,70 +1,329 @@
 <!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>KORKO — Surfez libre</title><link rel="stylesheet" href="/static/style.css"></head>
-<body><main class="app"><p id="offline-notice" class="reset-notice" role="status" aria-live="polite" hidden>Connexion temporairement interrompue. Votre session reste enregistrée. Elle sera synchronisée automatiquement.</p>
-<header><a class="brand" href="/" aria-label="KORKO, accueil">KORKO<span>°</span></a><div class="location">Station A · Côte Atlantique</div></header>
-<section id="landing" class="screen intro active"><div class="wave">⌇</div><p id="reset-notice" class="reset-notice" role="status" aria-live="polite" hidden>La démonstration a été réinitialisée.</p><p class="eyebrow">LIBERTÉ, CÔTÉ OCÉAN</p><h1>La vague<br>vous attend.</h1><p class="lead">Prenez une planche. Partez surfer. Raccrochez-la à votre retour.</p><button class="primary" data-go="phone">Louer une planche <b>→</b></button><p class="hint">0,20 € / minute · Paiement sécurisé</p></section>
-<section id="phone" class="screen"><button class="back" data-go="landing">← Retour</button><p class="eyebrow">EN QUELQUES SECONDES</p><h1>Votre numéro,<br>c’est tout.</h1><p class="lead">On l’utilise uniquement pour votre reçu.</p><form id="phone-form"><label for="phone-input">Numéro de téléphone</label><input id="phone-input" type="tel" inputmode="tel" autocomplete="tel" placeholder="06 12 34 56 78" required><p id="phone-error" class="error" role="alert"></p><button class="primary" type="submit">Continuer <b>→</b></button></form><p class="hint">Carte bancaire simulée pour cette démo.</p></section>
-<section id="ready" class="screen"><p class="eyebrow">PRÊT À PARTIR</p><h1>Votre prochaine<br>vague commence ici.</h1><p id="offline-title" class="eyebrow" hidden>Connexion limitée</p><p id="offline-message" class="lead" hidden>Le service fonctionne en mode hors ligne.</p><div class="availability"><span class="dot"></span><strong id="board-count">—</strong> <span id="board-count-label">planches disponibles</span></div><p class="lead">Rendez-vous au râtelier de la station A.</p><button id="arm-button" class="primary">Je veux surfer <b>→</b></button><p id="arm-error" class="error" role="alert"></p></section>
-<section id="armed" class="screen centered"><p class="eyebrow">VOTRE PLANCHE EST PRÊTE</p><p class="take">Prenez la planche</p><h1 id="board-name" class="board">01</h1><p class="lead">Éloignez-vous simplement avec la planche. Le compteur démarrera automatiquement.</p><p class="reservation-note">Votre planche est réservée. Prenez-la dans les 2 prochaines minutes.</p><div class="waiting"><i></i><span>En attente de votre départ…</span></div></section>
-<section id="expired" class="screen"><p class="eyebrow">RÉSERVATION TERMINÉE</p><h1>Votre réservation a expiré</h1><p class="lead">Pas de souci, la planche est de nouveau disponible.</p><button class="primary" data-go="ready">Réserver une planche <b>→</b></button></section>
-<section id="active" class="screen centered"><p class="eyebrow">VOUS ÊTES À L’EAU</p><p class="board-mini">Planche <strong id="active-board">01</strong></p><p id="board-update" class="board-update" role="status" aria-live="polite" hidden></p><div id="rental-alert" class="rental-alert" role="status" aria-live="polite" hidden><strong id="rental-alert-title"></strong><span id="rental-alert-message"></span></div><time id="duration">00:00</time><p class="price" id="current-price">0,00 €</p><p class="rate">0,20 € / minute</p><div class="return-note">Pour terminer, raccrochez simplement la planche au râtelier.</div></section>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport"
+        content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>KORKO — Surfez libre</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+<!-- Pictogrammes des moyens de paiement, réutilisés par <use>. -->
+<svg class="sprite" aria-hidden="true">
+  <symbol id="icone-carte" viewBox="0 0 32 22">
+    <rect x="1" y="1" width="30" height="20" rx="3.5" fill="none"
+          stroke="currentColor" stroke-width="2"/>
+    <rect x="1" y="5.5" width="30" height="3.5" fill="currentColor"/>
+    <rect x="5" y="13" width="7" height="4" rx="1" fill="currentColor"/>
+  </symbol>
+  <symbol id="icone-apple-pay" viewBox="0 0 48 22">
+    <rect width="48" height="22" rx="5" fill="#000"/>
+    <path fill="#fff" transform="translate(6 3) scale(.66)"
+          d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1
+             -2.8.9-3.5.9-.7 0-1.8-.9-3-.8-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7
+             1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3
+             0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.8zM14.1
+             5.8c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.8 1
+             .1 2.1-.5 2.7-1.2z"/>
+    <text x="21" y="15.5" fill="#fff" font-size="11" font-weight="600"
+          font-family="-apple-system, Segoe UI, Arial, sans-serif">Pay</text>
+  </symbol>
+  <symbol id="icone-avalanche" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="12" fill="#e84142"/>
+    <path fill="#fff" d="M11.9 5.6 5.3 17.2h4.6l3.6-6.4zM15.1 12.7l-2.6
+          4.5h5.2z"/>
+  </symbol>
+</svg>
+<main class="app">
+  <header>
+    <a class="brand" href="/" aria-label="KORKO, accueil">
+      KORKO<span>°</span>
+    </a>
+  </header>
+  <!-- Visible sur tous les écrans tant que le cloud ne répond pas. -->
+  <div id="bandeau-hors-ligne" class="bandeau" role="status" aria-live="polite"
+       hidden>
+    <strong>Connexion limitée</strong>
+    <span id="texte-hors-ligne"></span>
+  </div>
 
-<section id="receipt" class="screen centered">
-  <div class="check">✓</div>
-  <p class="eyebrow">SESSION TERMINÉE</p>
-  <h1>À bientôt<br>dans l’eau.</h1>
-  <p class="lead">Votre planche a bien été raccrochée.</p>
-
-  <div class="receipt-line"><span>Planche</span><strong id="receipt-board">—</strong></div>
-  <div class="receipt-line"><span>Durée</span><strong id="final-duration">—</strong></div>
-  <div class="receipt-line total"><span>Total</span><strong id="final-price">—</strong></div>
-
-  <div id="condition-form" class="condition-form">
-    <h2>Comment est la planche ?</h2>
-    <div class="condition-choices" role="radiogroup" aria-label="État de la planche">
-      <button type="button" role="radio" aria-checked="false" data-condition="OK">Tout va bien</button>
-      <button type="button" role="radio" aria-checked="false" data-condition="MINOR">Petit problème</button>
-      <button type="button" role="radio" aria-checked="false" data-condition="DAMAGED">Planche abîmée</button>
+  <section id="pret" class="screen active">
+    <p id="annonce" class="annonce" role="status" hidden></p>
+    <p class="eyebrow">PRÊT À PARTIR</p>
+    <h1>Votre prochaine<br>vague commence ici.</h1>
+    <div class="availability">
+      <span class="dot" aria-hidden="true"></span>
+      <strong id="nombre-planches">—</strong>
+      <span id="texte-planches">planches disponibles</span>
     </div>
-    <button id="submit-condition" type="button" class="primary condition-submit" disabled>Valider l'état</button>
-    <button id="skip-condition" type="button" class="skip-condition">Passer cette étape</button>
-    <p id="condition-error" class="condition-error" role="status" aria-live="polite"></p>
-  </div>
+    <p class="lead">Prenez une planche et partez surfer.</p>
+    <button id="bouton-surfer" class="primary" data-go="identification">
+      Je veux surfer <b>→</b>
+    </button>
+    <!-- Hors ligne : la station réserve pour un client déjà autorisé. -->
+    <button id="bouton-hors-ligne" type="button" class="primary" hidden
+            disabled>
+      <span id="texte-prendre">Prendre une planche</span> <b>→</b>
+    </button>
+    <p id="erreur-hors-ligne" class="error repliable" role="alert"></p>
+    <p id="horaires" class="hint">Locations jusqu’à 22 h · 0,20 € / minute</p>
+  </section>
 
-  <p id="condition-thanks" class="condition-thanks" role="status" aria-live="polite" hidden>Merci, votre retour nous aide à entretenir les planches.</p>
+  <section id="identification" class="screen">
+    <button class="back" data-go="pret">← Retour</button>
+    <p class="eyebrow">RÉSERVATION</p>
+    <h1 class="titre-moyen">Une étape,<br>et à l’eau.</h1>
+    <!-- Les champs de carte n'ont pas d'attribut name : le navigateur ne
+         peut jamais les envoyer ; seul app.js construit la requête. -->
+    <form id="formulaire-identification" novalidate>
+      <div class="rangee">
+        <div>
+          <label for="prenom">Prénom</label>
+          <input id="prenom" autocomplete="given-name">
+        </div>
+        <div>
+          <label for="nom">Nom</label>
+          <input id="nom" autocomplete="family-name">
+        </div>
+      </div>
+      <label for="telephone">Téléphone</label>
+      <input id="telephone" type="tel" inputmode="tel" autocomplete="tel"
+             placeholder="06 12 34 56 78">
 
-  <div class="photo-form">
-    <h2>Vérifiez la planche par photo</h2>
-    <p class="photo-instruction">Prenez la planche entière avec son numéro bien lisible et une vue nette de sa surface.</p>
-    <button id="photo-button" type="button" class="photo-button">Prendre ou choisir une photo</button>
-    <input id="photo-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden>
-    <img id="photo-preview" class="photo-preview" alt="Aperçu de la photo choisie" hidden>
-    <p id="photo-note" class="photo-note">JPEG, PNG ou WebP · 8 Mo maximum</p>
-    <button id="submit-photo" type="button" class="primary photo-submit" disabled>Analyser la photo</button>
-    <p id="photo-progress" class="photo-progress" role="status" aria-live="polite" hidden>Envoi de la photo au cloud…</p>
-    <p id="photo-error" class="condition-error" role="alert"></p>
-    <p class="photo-disclaimer">La photo est transmise à un service d’analyse d’image. Ce contrôle est informatif et ne change pas votre location.</p>
-  </div>
+      <fieldset class="moyens">
+        <legend>Moyen de paiement</legend>
+        <div id="moyen-enregistre" class="moyen-enregistre" hidden>
+          <label>
+            <input type="radio" name="moyen" value="enregistre">
+            <span class="tuile">
+              <svg class="icone" aria-hidden="true">
+                <use id="icone-enregistre" href="#icone-carte"/>
+              </svg>
+              <strong id="libelle-enregistre">—</strong>
+              <small>enregistré</small>
+            </span>
+          </label>
+          <button id="changer-moyen" type="button" class="lien-discret"
+                  aria-label="Changer de moyen de paiement">Changer</button>
+        </div>
+        <div id="choix-moyens" class="tuiles">
+          <label>
+            <input type="radio" name="moyen" value="carte">
+            <span class="tuile">
+              <svg class="icone" aria-hidden="true">
+                <use href="#icone-carte"/>
+              </svg>
+              <strong>Carte</strong><small>simulée</small>
+            </span>
+          </label>
+          <label>
+            <input type="radio" name="moyen" value="apple_pay">
+            <span class="tuile">
+              <svg class="icone icone-large" aria-hidden="true">
+                <use href="#icone-apple-pay"/>
+              </svg>
+              <strong>Apple Pay</strong><small>simulé</small>
+            </span>
+          </label>
+          <label>
+            <input type="radio" name="moyen" value="crypto">
+            <span class="tuile">
+              <svg class="icone" aria-hidden="true">
+                <use href="#icone-avalanche"/>
+              </svg>
+              <strong>Crypto</strong><small>AVAX · Fuji</small>
+            </span>
+          </label>
+        </div>
+        <p id="note-crypto" class="note" hidden>
+          Réseau de test Avalanche Fuji : un portefeuille de démonstration est
+          créé pour vous et la caution y est réellement bloquée par un
+          contrat, sans argent réel.
+        </p>
+        <label id="choix-nouveau-portefeuille" class="case" hidden>
+          <input id="nouveau-portefeuille" type="checkbox">
+          <span id="texte-nouveau-portefeuille">
+            Utiliser un nouveau portefeuille
+          </span>
+        </label>
+      </fieldset>
 
-  <button id="skip-photo" type="button" class="skip-condition" data-go="ready">Passer pour le moment</button>
-</section>
+      <div id="champs-carte">
+        <label for="numero-carte">Numéro de carte</label>
+        <input id="numero-carte" inputmode="numeric" autocomplete="cc-number"
+               placeholder="1234 1234 1234 1234">
+        <div class="rangee">
+          <div>
+            <label for="expiration">Expiration</label>
+            <input id="expiration" inputmode="numeric" autocomplete="cc-exp"
+                   placeholder="MM/AA">
+          </div>
+          <div>
+            <label for="cvc">CVC</label>
+            <input id="cvc" inputmode="numeric" autocomplete="cc-csc"
+                   placeholder="123">
+          </div>
+        </div>
+        <button id="carte-de-test" type="button" class="lien-discret">
+          Utiliser une carte de test
+        </button>
+      </div>
 
-<section id="photo-pending" class="screen centered">
-  <div class="result-icon result-wait" aria-hidden="true">…</div>
-  <p class="eyebrow">PHOTO REÇUE PAR LE CLOUD</p>
-  <h1>Analyse en attente</h1>
-  <p id="photo-pending-message" class="lead">La photo est enregistrée. Le résultat apparaîtra ici dès que l’analyse sera terminée.</p>
-  <p class="photo-disclaimer">Tu peux garder cette page ouverte. La file reprend automatiquement après un redémarrage du cloud.</p>
-  <button class="primary receipt-next" data-go="ready">Continuer <b>→</b></button>
-</section>
+      <p class="encadre">
+        Caution de <strong>300 €</strong> bloquée, jamais débitée si la
+        planche revient avant 23 h.
+      </p>
+      <div class="action">
+        <p id="erreur-identification" class="error" role="alert"></p>
+        <button id="bouton-reserver" class="primary" type="submit">
+          <span id="texte-reserver">Réserver ma planche</span> <b>→</b>
+        </button>
+      </div>
+      <p class="tarif">
+        Vous ne payez qu’à la fin de votre session ·
+        <strong>0,20 € / minute</strong>
+      </p>
+    </form>
+  </section>
 
-<section id="photo-result" class="screen centered">
-  <div id="photo-result-icon" class="result-icon" aria-hidden="true">✓</div>
-  <p class="eyebrow">VÉRIFICATION DE LA PHOTO</p>
-  <h1 id="photo-result-title">Résultat</h1>
-  <p id="photo-result-message" class="lead"></p>
-  <p class="photo-disclaimer">Cette analyse vous informe uniquement. Aucun frais, état de planche ou montant de location n’est modifié.</p>
-  <button id="retry-photo" type="button" class="photo-button">Prendre une autre photo</button>
-  <button class="primary receipt-next" data-go="ready">Louer à nouveau <b>→</b></button>
-</section>
-</main><script src="/static/app.js"></script></body></html>
+  <section id="reservee" class="screen centered">
+    <p class="eyebrow">VOTRE PLANCHE EST PRÊTE</p>
+    <p class="take">Prenez la planche</p>
+    <h1 id="planche-reservee" class="board">01</h1>
+    <p class="lead">
+      Éloignez-vous simplement avec la planche. Le compteur démarrera
+      automatiquement.
+    </p>
+    <div class="waiting"><i></i><span>En attente de votre départ…</span></div>
+    <button id="annuler-reservation" type="button" class="secondaire">
+      Annuler
+    </button>
+    <!-- Réservation prise à la station : la station ne sait pas annuler. -->
+    <p id="note-sans-annulation" class="note-estimation sans-annulation" hidden>
+      Réservation prise à la station : elle ne peut pas être annulée.
+    </p>
+    <p id="erreur-annulation" class="error" role="alert"></p>
+  </section>
+
+  <section id="en-cours" class="screen centered">
+    <p class="eyebrow">VOUS ÊTES À L’EAU</p>
+    <p class="board-mini">Planche <strong id="planche-en-cours">01</strong></p>
+    <p id="message-ecart" class="board-update" role="status" aria-live="polite"
+       hidden></p>
+    <time id="duree" class="chrono">00:00</time>
+    <p id="prix-courant" class="price">0,00 €</p>
+    <p class="rate">0,20 € / minute</p>
+    <p id="note-estimation" class="note-estimation" hidden>
+      Estimation de la station, confirmée au retour de la connexion.
+    </p>
+    <div class="return-note">
+      Pour terminer, raccrochez simplement la planche au râtelier.
+    </div>
+  </section>
+
+  <section id="recu" class="screen centered">
+    <div class="check">✓</div>
+    <p class="eyebrow">SESSION TERMINÉE</p>
+    <h1>À bientôt<br>dans l’eau.</h1>
+    <p class="lead">Votre planche a bien été raccrochée.</p>
+    <div class="receipt-line">
+      <span>Planche</span><strong id="recu-planche">—</strong>
+    </div>
+    <div class="receipt-line">
+      <span>Durée</span><strong id="recu-duree">—</strong>
+    </div>
+    <div class="receipt-line">
+      <span>Caution</span><strong id="recu-caution">—</strong>
+    </div>
+    <div class="receipt-line total">
+      <span>Débité</span><strong id="recu-debit">—</strong>
+    </div>
+    <p id="recu-liens" class="liens"></p>
+    <div id="formulaire-etat" class="condition-form">
+      <h2>Comment est la planche ?</h2>
+      <div class="condition-choices" role="radiogroup"
+           aria-label="État de la planche">
+        <button type="button" role="radio" aria-checked="false"
+                data-condition="OK">Tout va bien</button>
+        <button type="button" role="radio" aria-checked="false"
+                data-condition="MINOR">Petit problème</button>
+        <button type="button" role="radio" aria-checked="false"
+                data-condition="DAMAGED">Planche abîmée</button>
+      </div>
+      <button id="valider-etat" type="button" class="primary condition-submit"
+              disabled>Valider l’état</button>
+      <button id="passer-etat" type="button" class="skip-condition">
+        Passer
+      </button>
+      <p id="erreur-etat" class="condition-error" role="status"
+         aria-live="polite"></p>
+    </div>
+    <p id="merci-etat" class="condition-thanks" role="status"
+       aria-live="polite" hidden>
+      Merci, votre retour nous aide à entretenir les planches.
+    </p>
+    <section id="verification-photo" class="photo-verification">
+      <h2>Vérifier la planche en photo</h2>
+      <button id="bouton-photo" type="button" class="photo-button">Ajouter une photo</button>
+      <input id="photo" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden>
+      <img id="photo-preview" class="photo-preview" alt="Aperçu de la photo" hidden>
+      <p id="note-photo" class="photo-note">JPEG, PNG ou WebP, 8 Mo maximum.</p>
+      <p id="photo-progress" class="photo-progress" role="status" aria-live="polite" hidden></p>
+      <p id="photo-error" class="photo-error" role="alert" hidden></p>
+      <button id="submit-photo" type="button" class="primary photo-submit" disabled hidden>Envoyer la photo</button>
+      <div id="photo-pending" class="photo-status" role="status" aria-live="polite" hidden>
+        <p id="photo-pending-message">Vérification de la photo en cours…</p>
+      </div>
+      <div id="photo-result" class="photo-status" role="status" aria-live="polite" hidden>
+        <span id="photo-result-icon" aria-hidden="true"></span>
+        <h3 id="photo-result-title"></h3>
+        <p id="photo-result-message"></p>
+        <button id="retry-photo" type="button" class="photo-button" hidden>Réessayer</button>
+      </div>
+    </section>
+    <button class="primary receipt-next" data-go="pret">
+      Louer à nouveau <b>→</b>
+    </button>
+  </section>
+
+  <section id="caution-debitee" class="screen centered">
+    <div class="check alerte">!</div>
+    <p class="eyebrow">SESSION CLÔTURÉE</p>
+    <h1 class="titre-moyen">Planche non rendue avant 23 h</h1>
+    <p id="debitee-detail" class="lead">Caution de 300 € débitée.</p>
+    <p id="debitee-liens" class="liens"></p>
+    <button class="primary" data-go="pret">
+      Retour à l’accueil <b>→</b>
+    </button>
+  </section>
+
+  <aside id="suivi" class="suivi" hidden>
+    <div id="garantie" class="garantie">
+      <p id="caution-texte" class="caution" aria-live="polite"></p>
+      <p id="caution-liens" class="liens"></p>
+      <p class="limite"><strong>À rendre avant 23 heures</strong></p>
+    </div>
+    <section id="messages" class="messages" hidden>
+      <h2>Messages</h2>
+      <ol id="messages-liste" aria-live="polite"></ol>
+    </section>
+  </aside>
+
+  <dialog id="feuille-apple-pay" class="feuille"
+          aria-labelledby="titre-apple-pay">
+    <p id="titre-apple-pay" class="feuille-titre">Apple Pay (simulation)</p>
+    <div class="receipt-line"><span>Marchand</span><strong>KORKO</strong></div>
+    <div class="receipt-line">
+      <span>Caution</span><strong>300,00 € bloquée, non débitée</strong>
+    </div>
+    <button id="confirmer-apple-pay" type="button" class="primary">
+      Confirmer
+    </button>
+    <button id="annuler-apple-pay" type="button" class="lien-discret">
+      Annuler
+    </button>
+  </dialog>
+</main>
+</body>
+</html>

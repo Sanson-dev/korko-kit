@@ -6,7 +6,8 @@ téléchargé (au premier lancement).
     .venv\\Scripts\\python -m unittest smart_contract.test_registre -v
 """
 
-import ast
+import os
+import tempfile
 import unittest
 
 from eth_account import Account
@@ -15,7 +16,7 @@ from eth_utils import ValidationError
 from web3 import EthereumTesterProvider, Web3
 from web3.exceptions import ContractCustomError
 
-from smart_contract import chaine, deployer
+from smart_contract import boite_envoi, chaine, deployer
 
 STATIONS_TEST = {"A": {"korko-01", "korko-02"}, "B": {"korko-03"}}
 DEPART_01 = {"t": 74.5, "station": "A", "balise": "korko-01",
@@ -44,8 +45,6 @@ class NoeudLocal(EthereumTesterProvider):
     def erreur(self, code, message, octets):
         if isinstance(octets, Exception):
             octets = octets.args[0]
-        if isinstance(octets, str):
-            octets = ast.literal_eval(octets)
         donnees = "0x" + octets.hex()
         erreur = {"code": code, "message": message, "data": donnees}
         return {"jsonrpc": "2.0", "id": 0, "error": erreur}
@@ -69,6 +68,9 @@ class TestRegistre(unittest.TestCase):
         self.registre = deployer.deployer(self.w3, self.abi, self.bytecode)
         deployer.inscrire_parc(self.registre, STATIONS_TEST)
         self.fonctions = self.registre.functions
+        dossier = tempfile.TemporaryDirectory()
+        self.addCleanup(dossier.cleanup)
+        self.base = os.path.join(dossier.name, "korko_cloud.sqlite3")
 
     def envoyer(self, appel):
         return chaine.attendre(self.w3, appel.transact())
@@ -76,8 +78,16 @@ class TestRegistre(unittest.TestCase):
     def planche(self, numero):
         return self.fonctions.lirePlanche(numero).call()
 
-    def publieur(self, journal):
-        return chaine.Publieur(self.registre, self.compte, journal.append)
+    def publieur(self, journal, registre=None):
+        """Un publieur neuf sur la même boîte d'envoi : un redémarrage."""
+        boite = boite_envoi.BoiteEnvoi(self.base)
+        return chaine.Publieur(registre or self.registre, self.compte, boite,
+                               journal.append)
+
+    def inscrire(self, publieur, evenement):
+        """Dépose l'événement dans la boîte, puis tente de l'inscrire."""
+        publieur.publier(evenement)
+        return publieur.inscrire(publieur.file.get_nowait())
 
     def assertRefus(self, erreur, appel, expediteur=None):
         """Le contrat refuse l'appel avec l'erreur nommée."""
@@ -160,15 +170,15 @@ class TestRegistre(unittest.TestCase):
 
     def test_le_publieur_inscrit_un_depart(self):
         journal = []
-        self.assertTrue(self.publieur(journal).inscrire(DEPART_01))
+        self.assertTrue(self.inscrire(self.publieur(journal), DEPART_01))
         self.assertTrue(self.planche(1).enMer)
         self.assertIn("CHAÎNE DEPART korko-01 en A : https://", journal[0])
 
     def test_le_publieur_inscrit_une_etrangere_comme_retour(self):
         publieur = self.publieur([])
-        publieur.inscrire(DEPART_01)
-        publieur.inscrire(dict(DEPART_01, evenement="ETRANGERE",
-                               station="B"))
+        self.inscrire(publieur, DEPART_01)
+        self.inscrire(publieur, dict(DEPART_01, evenement="ETRANGERE",
+                                     station="B"))
         planche = self.planche(1)
         self.assertEqual((planche.enMer, planche.derniereStation),
                          (False, "B"))
@@ -176,24 +186,45 @@ class TestRegistre(unittest.TestCase):
     def test_le_publieur_journalise_un_refus(self):
         journal = []
         publieur = self.publieur(journal)
-        self.assertTrue(publieur.inscrire(dict(DEPART_01, station="Z")))
+        self.assertTrue(self.inscrire(publieur, dict(DEPART_01, station="Z")))
         self.assertEqual(journal,
                          ["CHAÎNE refus : DEPART korko-01 en Z "
                           "(StationInconnue)"])
 
-    def test_un_envoi_deja_parvenu_n_est_pas_double(self):
+    def test_un_evenement_recu_deux_fois_n_est_depose_qu_une_fois(self):
         publieur = self.publieur([])
-        publieur.nonce, publieur.signee = publieur.signer(DEPART_01)
-        self.w3.eth.send_raw_transaction(publieur.signee.raw_transaction)
-        self.assertTrue(publieur.inscrire(DEPART_01))
+        publieur.publier(DEPART_01)
+        publieur.publier(dict(DEPART_01))
+        self.assertEqual(publieur.file.qsize(), 1)
+
+    def test_la_boite_d_envoi_survit_a_un_redemarrage(self):
+        self.publieur([]).publier(DEPART_01)
+        repris = self.publieur([])
+        self.assertEqual(repris.file.qsize(), 1)
+        self.assertTrue(repris.inscrire(repris.file.get_nowait()))
+        self.assertEqual(self.publieur([]).file.qsize(), 0)
+        self.assertEqual(self.planche(1).nombreDeparts, 1)
+
+    def test_un_envoi_parvenu_avant_un_redemarrage_n_est_pas_double(self):
+        avant = self.publieur([])
+        avant.publier(DEPART_01)
+        envoi = avant.file.get_nowait()
+        avant.signer(envoi)
+        self.w3.eth.send_raw_transaction(envoi["brut"])
+        apres = self.publieur([])
+        repris = apres.file.get_nowait()
+        self.assertEqual(repris["brut"], envoi["brut"])
+        self.assertTrue(apres.inscrire(repris))
         self.assertEqual(self.planche(1).nombreDeparts, 1)
 
     def test_un_nonce_pris_ailleurs_est_signe_a_nouveau(self):
         publieur = self.publieur([])
-        publieur.nonce, publieur.signee = publieur.signer(DEPART_01)
+        publieur.publier(DEPART_01)
+        envoi = publieur.file.get_nowait()
+        publieur.signer(envoi)
         self.envoyer(self.fonctions.ajouterStation("C"))
-        self.assertFalse(publieur.inscrire(DEPART_01))
-        self.assertTrue(publieur.inscrire(DEPART_01))
+        self.assertFalse(publieur.inscrire(envoi))
+        self.assertTrue(publieur.inscrire(envoi))
         self.assertEqual(self.planche(1).nombreDeparts, 1)
 
     def test_fuji_injoignable(self):
@@ -204,10 +235,14 @@ class TestRegistre(unittest.TestCase):
         self.assertEqual(chaine.lire_parc(registre, STATIONS_TEST)["korko-03"],
                          "B")
         journal = []
-        publieur = chaine.Publieur(registre, self.compte, journal.append)
-        self.assertFalse(publieur.inscrire(DEPART_01))
-        self.assertFalse(publieur.inscrire(DEPART_01))
+        publieur = self.publieur(journal, registre)
+        publieur.publier(DEPART_01)
+        envoi = publieur.file.get_nowait()
+        self.assertFalse(publieur.inscrire(envoi))
+        self.assertFalse(publieur.inscrire(envoi))
         self.assertEqual(len(journal), 1)
+        attente = boite_envoi.BoiteEnvoi(self.base).en_attente()
+        self.assertEqual(len(attente), 1)
 
 
 if __name__ == "__main__":
