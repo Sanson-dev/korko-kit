@@ -4,3 +4,5 @@ station_offline_state.json
 __pycache__/
 *.pyc
 *:Zone.Identifier
+
+.venv/
